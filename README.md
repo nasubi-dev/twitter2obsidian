@@ -5,10 +5,13 @@ Firefox 拡張機能で Twitter/X のツイートを簡単に Obsidian に保存
 ## 機能
 
 - 🐦 Twitter/X のツイートをワンクリックで保存
+- 📚 ブックマークを一括で Obsidian に保存（無限スクロール対応）
+- ⌨️ キーボードショートカット（`Alt+O`）で素早く保存
 - 📝 Frontmatter 付き Markdown ファイルとして保存
 - 🖼️ ツイート内の画像 URL も自動保存
+- 🎥 動画ツイート対応（サムネイル、リンク、iframe 埋め込み）
 - 🔒 Obsidian Local REST API を使用した安全な保存
-- 🔔 保存完了の通知表示
+- 🔔 トースト通知とシステム通知で保存状態をお知らせ
 
 ## 前提条件
 
@@ -32,43 +35,85 @@ Firefox 拡張機能で Twitter/X のツイートを簡単に Obsidian に保存
 
 ### 初期設定
 
-1. Firefox のツールバーにある拡張機能アイコンをクリック
-2. 「Settings」ボタンをクリック
+1. Firefox で `about:addons` を開く
+2. 「Twitter to Obsidian」の「設定」タブをクリック
 3. 以下を設定:
    - **API Endpoint**: Obsidian Local REST API の URL (デフォルト: `https://127.0.0.1:27124`)
    - **API Key**: Obsidian で生成した API キー
    - **Folder Path**: 保存先フォルダ (デフォルト: `Clippings/twitter`)
+   - **Show Notifications**: システム通知の ON/OFF
 4. 「Test Connection」で接続確認
 5. 「Save Settings」で設定を保存
 
 ### ツイートの保存
 
+#### 方法 1: URL バーアイコンをクリック
+
+1. Twitter/X で保存したいツイートのページを開く（`https://x.com/*/status/*`）
+2. URL バー右側に表示される拡張機能アイコンをクリック
+3. 成功するとページ内にトースト通知が表示されます
+
+#### 方法 2: キーボードショートカット
+
 1. Twitter/X で保存したいツイートのページを開く
-2. 拡張機能アイコンをクリック
-3. 「Save Current Tweet」ボタンをクリック
-4. 成功すると通知が表示されます
+2. `Alt+O` キーを押す
+3. 成功するとページ内にトースト通知が表示されます
+
+### ブックマークの一括保存
+
+1. Twitter/X のブックマークページ（`https://x.com/i/bookmarks`）を開く
+2. 右下に表示される「📚 Save All Bookmarks to Obsidian」ボタンをクリック
+3. 自動的に全ブックマークをスクロールして収集
+4. 順次 Obsidian に保存（進捗がボタンに表示されます）
+5. 保存完了後、結果（保存数、スキップ数、失敗数）が表示されます
+
+> **Note**: ブックマーク一括保存は無限スクロールに対応しています。すべてのブックマークが自動的に収集されるまで待機します。
 
 ### 保存されるファイル
 
-ファイル名: `{投稿者名}-{ツイートID}.md`
+ファイル名: `{投稿者の表示名}-{ツイートID}.md`
 
-例: `elonmusk-1234567890.md`
+例: `Elon Musk-1234567890.md`
+
+#### テキスト・画像ツイートの場合
 
 ```markdown
 ---
 source: https://x.com/elonmusk/status/1234567890
-author: @elonmusk
+author: Elon Musk
 text: ツイートの本文がここに入ります
-created: 2025-01-15T10:30:00Z
+date: 2025-01-15
 images:
   - https://pbs.twimg.com/media/xxxxx?format=jpg&name=large
-tags:
-  - twitter
-  - clipping
+  - https://pbs.twimg.com/media/yyyyy?format=jpg&name=large
 ---
 
 ツイートの本文がここに入ります
+
+![Elon Musk - Tweet 1234567890 - Photo 1](https://pbs.twimg.com/media/xxxxx?format=jpg&name=large)
+![Elon Musk - Tweet 1234567890 - Photo 2](https://pbs.twimg.com/media/yyyyy?format=jpg&name=large)
 ```
+
+#### 動画ツイートの場合
+
+```markdown
+---
+source: https://x.com/username/status/1234567890
+author: Username
+text: 動画付きツイート
+date: 2025-01-15
+images:
+  - https://pbs.twimg.com/media/xxxxx?format=jpg&name=large
+---
+
+動画付きツイート
+
+🎥 [Watch Video on X](https://x.com/username/status/1234567890)
+
+<iframe src="https://x.com/username/status/1234567890" width="550" height="700" frameborder="0" allowfullscreen></iframe>
+```
+
+> **Note**: 動画ツイートの場合、`images` には動画のサムネイル画像が含まれますが、本文には表示されません。代わりに動画リンクと iframe 埋め込みが表示されます。
 
 ## トラブルシューティング
 
@@ -88,6 +133,13 @@ tags:
 
 - Twitter/X の個別ツイートページ（`https://x.com/username/status/1234567890`）を開いているか確認
 - タイムラインではなく、個別ツイートのページで実行してください
+- URL バーアイコンはツイートページでのみ表示されます
+
+### ブックマーク保存ボタンが表示されない
+
+- ブックマークページ（`https://x.com/i/bookmarks`）を開いているか確認
+- ページ読み込み後、数秒待ってからボタンが表示されます
+- 他のページに移動するとボタンは自動的に消えます
 
 ## 技術仕様
 

@@ -5,6 +5,38 @@
 
 console.log("Twitter to Obsidian: Content script loaded");
 
+// Initialize bookmark button if on bookmarks page
+checkAndInitBookmarksPage();
+
+// Monitor URL changes for SPA navigation
+let lastUrl = location.href;
+new MutationObserver(() => {
+  const url = location.href;
+  if (url !== lastUrl) {
+    lastUrl = url;
+    checkAndInitBookmarksPage();
+  }
+}).observe(document, { subtree: true, childList: true });
+
+/**
+ * Check if on bookmarks page and initialize button
+ */
+function checkAndInitBookmarksPage() {
+  const bookmarkButton = document.getElementById("obsidian-bookmark-button");
+
+  if (window.location.pathname === "/i/bookmarks") {
+    // On bookmarks page - show button
+    if (!bookmarkButton) {
+      initBookmarksPage();
+    }
+  } else {
+    // Not on bookmarks page - remove button
+    if (bookmarkButton) {
+      bookmarkButton.remove();
+    }
+  }
+}
+
 // Listen for messages from popup or background
 browser.runtime.onMessage.addListener(async (message) => {
   if (message.action === "extractTweet") {
@@ -20,6 +52,16 @@ browser.runtime.onMessage.addListener(async (message) => {
   if (message.action === "showToast") {
     showToast(message.text, message.type);
     return Promise.resolve({ success: true });
+  }
+
+  if (message.action === "extractTweetFromElement") {
+    try {
+      const tweetData = await extractTweetFromElement(message.tweetElement);
+      return Promise.resolve({ success: true, data: tweetData });
+    } catch (error) {
+      console.error("Error extracting tweet from element:", error);
+      return Promise.resolve({ success: false, error: error.message });
+    }
   }
 });
 
@@ -51,10 +93,13 @@ async function extractCurrentTweet() {
 
   // Extract tweet information
   const text = extractTweetText(tweetElement);
-  const username = extractUsername(tweetElement);
+  let username = extractUsername(tweetElement);
   const images = extractImages(tweetElement);
   const timestamp = extractTimestamp(tweetElement);
   const hasVideo = checkHasVideo(tweetElement);
+
+  // Replace / with ･ to avoid creating folders
+  username = username.replace(/\//g, "･");
 
   // Convert ISO timestamp to YYYY-MM-DD format
   const date = timestamp.split("T")[0];
@@ -326,4 +371,231 @@ function showToast(text, type = "success") {
       toast.remove();
     }, 300);
   }, 3000);
+}
+
+/**
+ * Initialize bookmarks page with save all button
+ */
+function initBookmarksPage() {
+  // Wait for page to load
+  setTimeout(() => {
+    createBookmarkSaveButton();
+  }, 2000);
+}
+
+/**
+ * Create floating button for saving all bookmarks
+ */
+function createBookmarkSaveButton() {
+  // Check if button already exists
+  if (document.getElementById("obsidian-bookmark-button")) {
+    return;
+  }
+
+  const button = document.createElement("button");
+  button.id = "obsidian-bookmark-button";
+  button.textContent = "📚 Save All Bookmarks to Obsidian";
+
+  // Style button
+  Object.assign(button.style, {
+    position: "fixed",
+    bottom: "30px",
+    right: "30px",
+    backgroundColor: "#8b5cf6",
+    color: "white",
+    padding: "16px 24px",
+    borderRadius: "12px",
+    fontSize: "16px",
+    fontWeight: "700",
+    border: "none",
+    cursor: "pointer",
+    boxShadow: "0 10px 25px -5px rgba(139, 92, 246, 0.5)",
+    zIndex: "10000",
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    transition: "all 0.3s ease",
+  });
+
+  // Hover effect
+  button.addEventListener("mouseenter", () => {
+    button.style.backgroundColor = "#7c3aed";
+    button.style.transform = "translateY(-2px)";
+    button.style.boxShadow = "0 15px 30px -5px rgba(139, 92, 246, 0.6)";
+  });
+
+  button.addEventListener("mouseleave", () => {
+    button.style.backgroundColor = "#8b5cf6";
+    button.style.transform = "translateY(0)";
+    button.style.boxShadow = "0 10px 25px -5px rgba(139, 92, 246, 0.5)";
+  });
+
+  // Click handler
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.style.opacity = "0.6";
+    button.style.cursor = "not-allowed";
+
+    await saveAllBookmarks(button);
+
+    button.disabled = false;
+    button.style.opacity = "1";
+    button.style.cursor = "pointer";
+  });
+
+  document.body.appendChild(button);
+}
+
+/**
+ * Save all bookmarks to Obsidian
+ */
+async function saveAllBookmarks(button) {
+  const originalText = button.textContent;
+
+  try {
+    showToast("🔍 Collecting bookmarks...", "info");
+    button.textContent = "🔍 Collecting bookmarks...";
+
+    // Collect all tweets by scrolling
+    const tweetElements = await collectAllBookmarks(button);
+
+    showToast(
+      `📊 Found ${tweetElements.length} bookmarks. Starting save...`,
+      "info"
+    );
+    button.textContent = `💾 Saving 0/${tweetElements.length}...`;
+
+    let saved = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    // Save each tweet
+    for (let i = 0; i < tweetElements.length; i++) {
+      const tweetElement = tweetElements[i];
+
+      try {
+        // Extract tweet data
+        const tweetData = await extractTweetFromArticle(tweetElement);
+
+        // Send to background script to save
+        const result = await browser.runtime.sendMessage({
+          action: "saveTweet",
+          data: tweetData,
+        });
+
+        if (result.success) {
+          saved++;
+        } else if (result.alreadyExists) {
+          skipped++;
+        } else {
+          failed++;
+        }
+      } catch (error) {
+        console.error("Error saving bookmark:", error);
+        failed++;
+      }
+
+      // Update progress
+      button.textContent = `💾 Saving ${i + 1}/${tweetElements.length}...`;
+
+      // Small delay to avoid overwhelming the API
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    // Show final result
+    button.textContent = originalText;
+
+    const resultMessage = `✅ Complete! Saved: ${saved}, Skipped: ${skipped}, Failed: ${failed}`;
+    showToast(resultMessage, saved > 0 ? "success" : "info");
+  } catch (error) {
+    console.error("Error saving bookmarks:", error);
+    button.textContent = originalText;
+    showToast("❌ Error: " + error.message, "error");
+  }
+}
+
+/**
+ * Collect all bookmark tweets by scrolling
+ */
+async function collectAllBookmarks(button) {
+  const tweets = new Set();
+  let lastCount = 0;
+  let noChangeCount = 0;
+  const maxNoChange = 5; // Stop after 5 scrolls with no new tweets
+
+  button.textContent = `🔍 Collecting... (${tweets.size} found)`;
+
+  while (noChangeCount < maxNoChange) {
+    // Get all tweet articles currently in DOM
+    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+
+    // Add new tweets to set
+    articles.forEach((article) => {
+      tweets.add(article);
+    });
+
+    // Update button
+    button.textContent = `🔍 Collecting... (${tweets.size} found)`;
+
+    // Check if we got new tweets
+    if (tweets.size === lastCount) {
+      noChangeCount++;
+    } else {
+      noChangeCount = 0;
+      lastCount = tweets.size;
+    }
+
+    // Scroll to bottom
+    window.scrollTo(0, document.body.scrollHeight);
+
+    // Wait for new content to load
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  return Array.from(tweets);
+}
+
+/**
+ * Extract tweet data from article element
+ */
+async function extractTweetFromArticle(tweetElement) {
+  // Extract tweet URL to get ID
+  const links = tweetElement.querySelectorAll('a[href*="/status/"]');
+  let tweetId = null;
+  let tweetUrl = null;
+
+  for (const link of links) {
+    const href = link.getAttribute("href");
+    const match = href.match(/\/status\/(\d+)/);
+    if (match) {
+      tweetId = match[1];
+      tweetUrl = "https://x.com" + href.split("?")[0];
+      break;
+    }
+  }
+
+  if (!tweetId) {
+    throw new Error("Could not find tweet ID");
+  }
+
+  // Extract other data
+  const text = extractTweetText(tweetElement);
+  let username = extractUsername(tweetElement);
+  const images = extractImages(tweetElement);
+  const timestamp = extractTimestamp(tweetElement);
+  const hasVideo = checkHasVideo(tweetElement);
+
+  // Replace / with ･ to avoid creating folders
+  username = username.replace(/\//g, "･");
+
+  const date = timestamp.split("T")[0];
+
+  return {
+    tweetId,
+    username,
+    text,
+    sourceUrl: tweetUrl,
+    images,
+    date,
+    hasVideo,
+  };
 }
