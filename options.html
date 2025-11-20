@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Twitter to Obsidian - Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      padding: 20px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    
+    h1 {
+      font-size: 24px;
+      color: #1DA1F2;
+      margin-bottom: 20px;
+    }
+    
+    .form-group {
+      margin-bottom: 20px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    
+    input:focus {
+      outline: none;
+      border-color: #1DA1F2;
+    }
+    
+    .help-text {
+      font-size: 13px;
+      color: #666;
+      margin-top: 4px;
+    }
+    
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .checkbox-group input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+    }
+    
+    .checkbox-group label {
+      margin: 0;
+      font-weight: normal;
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 30px;
+    }
+    
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    
+    .btn-primary {
+      background: #1DA1F2;
+      color: white;
+    }
+    
+    .btn-secondary {
+      background: #e1e8ed;
+      color: #333;
+    }
+    
+    .status {
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      display: none;
+    }
+    
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      display: block;
+    }
+    
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      display: block;
+    }
+    
+    .link {
+      color: #1DA1F2;
+      text-decoration: none;
+    }
+    
+    .link:hover {
+      text-decoration: underline;
+    }
+    
+    .info-box {
+      background: #e7f3ff;
+      border-left: 4px solid #1DA1F2;
+      padding: 12px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🐦 Twitter to Obsidian - Settings</h1>
+  
+  <div id="status" class="status"></div>
+  
+  <div class="info-box">
+    <strong>Required:</strong> Install 
+    <a href="https://github.com/coddingtonbear/obsidian-local-rest-api" 
+       target="_blank" 
+       class="link">Obsidian Local REST API plugin</a> 
+    first and generate an API key.
+  </div>
+  
+  <form id="settingsForm">
+    <div class="form-group">
+      <label for="endpoint">API Endpoint</label>
+      <input type="text" id="endpoint" required>
+      <div class="help-text">
+        Default: https://127.0.0.1:27124
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <label for="apiKey">API Key</label>
+      <input type="password" id="apiKey" required>
+      <div class="help-text">
+        Get from Obsidian Settings → Local REST API → Generate API Key
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <label for="folderPath">Folder Path</label>
+      <input type="text" id="folderPath" required>
+      <div class="help-text">
+        Relative path in your vault (e.g., Clippings/twitter)
+      </div>
+    </div>
+    
+    <div class="form-group checkbox-group">
+      <input type="checkbox" id="showNotifications">
+      <label for="showNotifications">Show notifications when tweet is saved</label>
+    </div>
+    
+    <div class="button-group">
+      <button type="submit" class="btn-primary">💾 Save Settings</button>
+      <button type="button" id="testBtn" class="btn-secondary">🔌 Test Connection</button>
+    </div>
+  </form>
+  
+  <script src="options.js"></script>
+</body>
+</html>

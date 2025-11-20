@@ -1,0 +1,17 @@
+# Firefox extension files
+web-ext-artifacts/
+*.xpi
+
+# MacOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*~
