@@ -98,8 +98,8 @@ async function extractCurrentTweet() {
   const timestamp = extractTimestamp(tweetElement);
   const hasVideo = checkHasVideo(tweetElement);
 
-  // Replace / with ･ to avoid creating folders
-  username = username.replace(/\//g, "･");
+  // Replace invalid filename characters with -
+  username = username.replace(/[#\[\]|^:"'\\\/]/g, "-");
 
   // Convert ISO timestamp to YYYY-MM-DD format
   const date = timestamp.split("T")[0];
@@ -584,8 +584,8 @@ async function extractTweetFromArticle(tweetElement) {
   const timestamp = extractTimestamp(tweetElement);
   const hasVideo = checkHasVideo(tweetElement);
 
-  // Replace / with ･ to avoid creating folders
-  username = username.replace(/\//g, "･");
+  // Replace invalid filename characters with -
+  username = username.replace(/[#\[\]|^:"'\\\/]/g, "-");
 
   const date = timestamp.split("T")[0];
 
