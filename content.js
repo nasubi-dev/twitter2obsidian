@@ -91,12 +91,16 @@ async function extractCurrentTweet() {
     );
   }
 
-  // Extract tweet information
-  const text = extractTweetText(tweetElement);
-  let username = extractUsername(tweetElement);
-  const images = extractImages(tweetElement);
-  const timestamp = extractTimestamp(tweetElement);
-  const hasVideo = checkHasVideo(tweetElement);
+  // Detect embedded quote tweet (one level deep) and extract it separately
+  const quotedCard = findQuotedTweet(tweetElement);
+  const quoted = quotedCard ? extractQuotedTweet(quotedCard) : null;
+
+  // Extract main tweet information (excluding the quoted card's content)
+  const text = extractTweetText(tweetElement, quotedCard);
+  let username = extractUsername(tweetElement, quotedCard);
+  const images = extractImages(tweetElement, quotedCard);
+  const timestamp = extractTimestamp(tweetElement, quotedCard);
+  const hasVideo = checkHasVideo(tweetElement, quotedCard);
 
   // Replace invalid filename characters with -
   username = username.replace(/[#\[\]|^:"'\\\/]/g, "-");
@@ -112,6 +116,7 @@ async function extractCurrentTweet() {
     images,
     date,
     hasVideo,
+    quoted,
   };
 }
 
@@ -135,8 +140,10 @@ function findMainTweet() {
 
 /**
  * Extract tweet text content
+ * @param {Element} tweetElement Tweet container
+ * @param {Element} [excludeElement] Subtree to ignore (e.g. quoted tweet card)
  */
-function extractTweetText(tweetElement) {
+function extractTweetText(tweetElement, excludeElement) {
   // Try multiple selectors
   const selectors = [
     '[data-testid="tweetText"]',
@@ -144,9 +151,15 @@ function extractTweetText(tweetElement) {
   ];
 
   for (const selector of selectors) {
-    const textElement = tweetElement.querySelector(selector);
-    if (textElement && textElement.textContent.trim()) {
-      return textElement.textContent.trim();
+    const textElements = tweetElement.querySelectorAll(selector);
+    for (const textElement of textElements) {
+      // Skip text that belongs to the quoted tweet card
+      if (excludeElement && excludeElement.contains(textElement)) {
+        continue;
+      }
+      if (textElement.textContent.trim()) {
+        return textElement.textContent.trim();
+      }
     }
   }
 
@@ -155,8 +168,10 @@ function extractTweetText(tweetElement) {
 
 /**
  * Extract username (display name, not @handle)
+ * @param {Element} tweetElement Tweet container
+ * @param {Element} [excludeElement] Subtree to ignore (e.g. quoted tweet card)
  */
-function extractUsername(tweetElement) {
+function extractUsername(tweetElement, excludeElement) {
   // Try to find display name (not @handle)
   const selectors = [
     '[data-testid="User-Name"] > div > div > span',
@@ -166,6 +181,10 @@ function extractUsername(tweetElement) {
   for (const selector of selectors) {
     const nameElements = tweetElement.querySelectorAll(selector);
     for (const elem of nameElements) {
+      // Skip names that belong to the quoted tweet card
+      if (excludeElement && excludeElement.contains(elem)) {
+        continue;
+      }
       const text = elem.textContent.trim();
       // Skip if it looks like @handle or timestamp
       if (text && !text.startsWith("@") && !text.match(/^\d+[smhd]$/)) {
@@ -184,9 +203,25 @@ function extractUsername(tweetElement) {
 }
 
 /**
- * Extract image URLs from tweet (including video thumbnails)
+ * Extract the @handle (with leading @) from a tweet/card element
  */
-function extractImages(tweetElement) {
+function extractHandle(element) {
+  const spans = element.querySelectorAll('[data-testid="User-Name"] span');
+  for (const span of spans) {
+    const text = span.textContent.trim();
+    if (text.startsWith("@")) {
+      return text;
+    }
+  }
+  return "";
+}
+
+/**
+ * Extract image URLs from tweet (including video thumbnails)
+ * @param {Element} tweetElement Tweet container
+ * @param {Element} [excludeElement] Subtree to ignore (e.g. quoted tweet card)
+ */
+function extractImages(tweetElement, excludeElement) {
   const images = [];
 
   // Find all image elements in tweet
@@ -199,6 +234,10 @@ function extractImages(tweetElement) {
   imgSelectors.forEach((selector) => {
     const imgElements = tweetElement.querySelectorAll(selector);
     imgElements.forEach((img) => {
+      // Skip images that belong to the quoted tweet card
+      if (excludeElement && excludeElement.contains(img)) {
+        return;
+      }
       let src = img.getAttribute("src");
 
       // Convert to high quality version
@@ -217,7 +256,7 @@ function extractImages(tweetElement) {
   const videoContainer = tweetElement.querySelector(
     '[data-testid="videoPlayer"]'
   );
-  if (videoContainer) {
+  if (videoContainer && !(excludeElement && excludeElement.contains(videoContainer))) {
     // Try to find video element or poster image
     const videoElement = videoContainer.querySelector("video");
     if (videoElement) {
@@ -246,19 +285,96 @@ function extractImages(tweetElement) {
 
 /**
  * Check if tweet contains video
+ * @param {Element} tweetElement Tweet container
+ * @param {Element} [excludeElement] Subtree to ignore (e.g. quoted tweet card)
  */
-function checkHasVideo(tweetElement) {
-  return !!tweetElement.querySelector('[data-testid="videoPlayer"]');
+function checkHasVideo(tweetElement, excludeElement) {
+  const player = tweetElement.querySelector('[data-testid="videoPlayer"]');
+  if (!player) return false;
+  if (excludeElement && excludeElement.contains(player)) return false;
+  return true;
+}
+
+/**
+ * Find the embedded quote tweet card inside a tweet (one level deep).
+ * The quoted tweet is rendered as a clickable card (role="link") that
+ * contains its own author name and text/photo.
+ * @returns {Element|null}
+ */
+function findQuotedTweet(tweetElement) {
+  const candidates = tweetElement.querySelectorAll('div[role="link"]');
+
+  for (const card of candidates) {
+    // A quote card has an author name AND either text or a photo
+    const hasAuthor = card.querySelector('[data-testid="User-Name"]');
+    const hasContent =
+      card.querySelector('[data-testid="tweetText"]') ||
+      card.querySelector('[data-testid="tweetPhoto"]');
+
+    if (hasAuthor && hasContent) {
+      return card;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract data from the quoted tweet card.
+ * @param {Element} card Element returned by findQuotedTweet
+ */
+function extractQuotedTweet(card) {
+  let username = extractUsername(card);
+  const handle = extractHandle(card);
+  const text = extractTweetText(card);
+  const images = extractImages(card);
+  const timestamp = extractTimestamp(card);
+  const hasVideo = checkHasVideo(card);
+
+  // Find the quoted status URL. The card itself has no href, but its photo
+  // links (e.g. /user/status/123/photo/1) contain the status path we need.
+  let sourceUrl = "";
+  const statusLink = card.querySelector('a[href*="/status/"]');
+  if (statusLink) {
+    const href = statusLink.getAttribute("href");
+    // Capture only "/<user>/status/<id>", stripping any /photo/N suffix
+    const match = href.match(/\/[^/]+\/status\/\d+/);
+    if (match) {
+      sourceUrl = "https://x.com" + match[0];
+    }
+  }
+
+  // Replace invalid filename characters with - (kept consistent with main tweet)
+  username = username.replace(/[#\[\]|^:"'\\\/]/g, "-");
+
+  const date = timestamp.split("T")[0];
+
+  return {
+    username,
+    handle,
+    text,
+    images,
+    date,
+    hasVideo,
+    sourceUrl,
+  };
 }
 
 /**
  * Extract tweet timestamp (ISO format)
+ * @param {Element} tweetElement Tweet container
+ * @param {Element} [excludeElement] Subtree to ignore (e.g. quoted tweet card)
  */
-function extractTimestamp(tweetElement) {
-  // Try to find time element
-  const timeElement = tweetElement.querySelector("time");
+function extractTimestamp(tweetElement, excludeElement) {
+  // Find the first time element that does not belong to the quoted card.
+  // On a status page the main tweet's time sits in the footer, which can
+  // appear after the quoted card's time in the DOM.
+  const timeElements = tweetElement.querySelectorAll("time");
 
-  if (timeElement) {
+  for (const timeElement of timeElements) {
+    if (excludeElement && excludeElement.contains(timeElement)) {
+      continue;
+    }
     const datetime = timeElement.getAttribute("datetime");
     if (datetime) {
       return datetime;
@@ -577,12 +693,16 @@ async function extractTweetFromArticle(tweetElement) {
     throw new Error("Could not find tweet ID");
   }
 
-  // Extract other data
-  const text = extractTweetText(tweetElement);
-  let username = extractUsername(tweetElement);
-  const images = extractImages(tweetElement);
-  const timestamp = extractTimestamp(tweetElement);
-  const hasVideo = checkHasVideo(tweetElement);
+  // Detect embedded quote tweet (one level deep) and extract it separately
+  const quotedCard = findQuotedTweet(tweetElement);
+  const quoted = quotedCard ? extractQuotedTweet(quotedCard) : null;
+
+  // Extract other data (excluding the quoted card's content)
+  const text = extractTweetText(tweetElement, quotedCard);
+  let username = extractUsername(tweetElement, quotedCard);
+  const images = extractImages(tweetElement, quotedCard);
+  const timestamp = extractTimestamp(tweetElement, quotedCard);
+  const hasVideo = checkHasVideo(tweetElement, quotedCard);
 
   // Replace invalid filename characters with -
   username = username.replace(/[#\[\]|^:"'\\\/]/g, "-");
@@ -597,5 +717,6 @@ async function extractTweetFromArticle(tweetElement) {
     images,
     date,
     hasVideo,
+    quoted,
   };
 }

@@ -194,7 +194,7 @@ async function checkFileExists(settings, filepath) {
  * Generate markdown content with frontmatter
  */
 function generateMarkdown(tweetData) {
-  const { username, text, sourceUrl, images, date, tweetId, hasVideo } =
+  const { username, text, sourceUrl, images, date, tweetId, hasVideo, quoted } =
     tweetData;
 
   let frontmatter = "---\n";
@@ -208,6 +208,25 @@ function generateMarkdown(tweetData) {
     images.forEach((img) => {
       frontmatter += `  - ${img}\n`;
     });
+  }
+
+  // Add quoted tweet info to frontmatter (one level deep)
+  if (quoted) {
+    if (quoted.username) {
+      frontmatter += `quoted_author: ${quoted.username}\n`;
+    }
+    if (quoted.text) {
+      frontmatter += `quoted_text: ${escapeFrontmatterString(quoted.text)}\n`;
+    }
+    if (quoted.sourceUrl) {
+      frontmatter += `quoted_source: ${quoted.sourceUrl}\n`;
+    }
+    if (quoted.images && quoted.images.length > 0) {
+      frontmatter += "quoted_images:\n";
+      quoted.images.forEach((img) => {
+        frontmatter += `  - ${img}\n`;
+      });
+    }
   }
 
   frontmatter += "---\n\n";
@@ -230,7 +249,52 @@ function generateMarkdown(tweetData) {
     });
   }
 
+  // Append quoted tweet as a blockquote (one level deep)
+  if (quoted) {
+    body += generateQuotedSection(quoted);
+  }
+
   return frontmatter + body;
+}
+
+/**
+ * Render a quoted tweet as a markdown blockquote section
+ */
+function generateQuotedSection(quoted) {
+  const author = quoted.handle
+    ? `${quoted.username} (${quoted.handle})`
+    : quoted.username;
+
+  let section = "\n\n---\n\n";
+  section += "引用元:";
+  if (author) {
+    section += ` ${author}`;
+  }
+  if (quoted.sourceUrl) {
+    section += ` - [${quoted.sourceUrl}](${quoted.sourceUrl})`;
+  }
+  section += "\n\n";
+
+  // Quoted text as blockquote
+  if (quoted.text) {
+    const quotedLines = quoted.text
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    section += quotedLines + "\n";
+  }
+
+  // Quoted video link / images
+  if (quoted.hasVideo && quoted.sourceUrl) {
+    section += `\n🎥 [Watch Video on X](${quoted.sourceUrl})\n`;
+  } else if (quoted.images && quoted.images.length > 0) {
+    section += "\n";
+    quoted.images.forEach((img, index) => {
+      section += `![${quoted.username} - Quoted Photo ${index + 1}](${img})\n`;
+    });
+  }
+
+  return section;
 }
 
 /**
