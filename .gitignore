@@ -15,3 +15,6 @@ web-ext-artifacts/
 # Temporary files
 *.tmp
 *~
+
+# Script state (resume cache, machine-local)
+scripts/.quote-patch-cache.json
