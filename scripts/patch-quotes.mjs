@@ -8,23 +8,95 @@
  *   - 本文末尾に「引用元:」ブロックを追記
  * 既存の本文・プロパティ(created/updated 等)はそのまま保持する。
  *
- * 使い方:
- *   node scripts/patch-quotes.mjs            # ドライラン(書き込みなし)
- *   node scripts/patch-quotes.mjs --apply    # 実際に書き込む
+ * 対象フォルダは環境変数 T2O_VAULT_DIR か --vault で指定する(必須)。
+ * 拡張の保存先(既定 <vault>/Clippings/twitter)を絶対パスで渡すこと。
  *
- * 中断しても再開できるよう、処理済みIDを scripts/.quote-patch-cache.json に記録する。
+ * 使い方:
+ *   export T2O_VAULT_DIR="$HOME/Documents/obsidian/Clippings/twitter"
+ *   node scripts/patch-quotes.mjs                     # ドライラン(書き込みなし)
+ *   node scripts/patch-quotes.mjs --apply             # 実際に書き込む
+ *
+ *   # 環境変数の代わりに引数でも渡せる
+ *   node scripts/patch-quotes.mjs --vault ~/path/to/twitter --apply
+ *
+ * 環境変数:
+ *   T2O_VAULT_DIR   対象フォルダ(必須。--vault が優先)
+ *   T2O_CACHE_FILE  再開用キャッシュの位置(任意。既定 scripts/.quote-patch-cache.json)
+ *   T2O_DELAY_MS    リクエスト間の待機ミリ秒(任意。既定 400)
+ *
+ * 中断しても再開できるよう、処理済みIDをキャッシュに記録する。
  */
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VAULT_DIR = "/Users/k24083kk/Documents/obisidian/Clippings/twitter";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CACHE_FILE = path.join(__dirname, ".quote-patch-cache.json");
 
 const APPLY = process.argv.includes("--apply");
-const DELAY_MS = 400; // X への負荷を抑えるための待機
+
+/** 先頭の ~ をホームディレクトリに展開する(シェルを介さず渡された場合の保険) */
+function expandHome(p) {
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+/** --vault <path> / --vault=<path> を読む */
+function parseVaultArg(argv) {
+  const eq = argv.find((a) => a.startsWith("--vault="));
+  if (eq) return eq.slice("--vault=".length);
+
+  const i = argv.indexOf("--vault");
+  if (i >= 0) return argv[i + 1];
+
+  return undefined;
+}
+
+const USAGE = `対象フォルダが指定されていません。
+
+  export T2O_VAULT_DIR="$HOME/Documents/obsidian/Clippings/twitter"
+  node scripts/patch-quotes.mjs            # ドライラン
+  node scripts/patch-quotes.mjs --apply    # 書き込み
+
+または:
+  node scripts/patch-quotes.mjs --vault <対象フォルダ> [--apply]`;
+
+/** 対象フォルダを解決する。未指定・不正なら usage を出して終了 */
+async function resolveVaultDir() {
+  const raw = parseVaultArg(process.argv) || process.env.T2O_VAULT_DIR;
+
+  if (!raw || raw.startsWith("--")) {
+    console.error(USAGE);
+    process.exit(1);
+  }
+
+  const dir = path.resolve(expandHome(raw));
+
+  let stat;
+  try {
+    stat = await fs.stat(dir);
+  } catch {
+    console.error(`対象フォルダが見つかりません: ${dir}`);
+    process.exit(1);
+  }
+  if (!stat.isDirectory()) {
+    console.error(`対象がフォルダではありません: ${dir}`);
+    process.exit(1);
+  }
+
+  return dir;
+}
+
+const CACHE_FILE = process.env.T2O_CACHE_FILE
+  ? path.resolve(expandHome(process.env.T2O_CACHE_FILE))
+  : path.join(__dirname, ".quote-patch-cache.json");
+
+// X への負荷を抑えるための待機
+const DELAY_MS = Number(process.env.T2O_DELAY_MS) > 0
+  ? Number(process.env.T2O_DELAY_MS)
+  : 400;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -147,8 +219,11 @@ async function loadCache() {
 }
 
 async function main() {
+  const vaultDir = await resolveVaultDir();
   const cache = await loadCache();
-  const files = (await fs.readdir(VAULT_DIR)).filter((f) => f.endsWith(".md"));
+  const files = (await fs.readdir(vaultDir)).filter((f) => f.endsWith(".md"));
+
+  console.log(`対象フォルダ: ${vaultDir}`);
 
   let scanned = 0,
     patched = 0,
@@ -163,7 +238,7 @@ async function main() {
     const idMatch = file.match(/-(\d+)\.md$/);
     if (!idMatch) continue;
     const id = idMatch[1];
-    const filePath = path.join(VAULT_DIR, file);
+    const filePath = path.join(vaultDir, file);
 
     const content = await fs.readFile(filePath, "utf8");
     if (/^quoted_source:/m.test(content)) {

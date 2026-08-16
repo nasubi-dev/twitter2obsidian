@@ -61,13 +61,15 @@ Firefox 拡張機能で Twitter/X のツイートを簡単に Obsidian に保存
 
 ### ブックマークの一括保存
 
-1. Twitter/X のブックマークページ（`https://x.com/i/bookmarks`）を開く
+1. Twitter/X のブックマークページ（`https://x.com/i/history`）を開く
 2. 右下に表示される「📚 Save All Bookmarks to Obsidian」ボタンをクリック
 3. 自動的に全ブックマークをスクロールして収集
 4. 順次 Obsidian に保存（進捗がボタンに表示されます）
 5. 保存完了後、結果（保存数、スキップ数、失敗数）が表示されます
 
 > **Note**: ブックマーク一括保存は無限スクロールに対応しています。すべてのブックマークが自動的に収集されるまで待機します。
+
+> **Note**: X はブックマークを「履歴」ページに統合したため、`/i/bookmarks` は `/i/history` にリダイレクトされます。ボタンが表示されるのはブックマークタブ（`/i/history`）だけで、いいねタブ（`/i/history/likes`）では表示されません。
 
 ### 保存されるファイル
 
@@ -127,7 +129,17 @@ images:
 - Obsidian が起動しているか確認
 - Local REST API プラグインが有効になっているか確認
 - API キーが正しいか確認
-- Firefox が`https://127.0.0.1/*`へのアクセスを許可しているか確認
+
+**`Cannot reach ...` と出る場合（自己署名証明書）**
+
+Local REST API の HTTPS ポート（27124）は自己署名証明書を使っており、Firefox はこれを拒否します。拡張のバックグラウンドページからは証明書の警告を承認できないため、拡張をリロードしても直りません。次のどちらかで解消します。
+
+- **HTTP ポートを使う（簡単）**: Endpoint を `http://127.0.0.1:27123` にする。ループバック限定なので外部には露出しません
+- **証明書を承認する**: Firefox の通常タブで `https://127.0.0.1:27124/` を開き、警告を承認してから再実行
+
+### 「Failed to save: 404」エラー
+
+保存先フォルダが Vault 内に存在するか確認してください。Settings の Folder Path は Vault ルートからの相対パス（例: `Clippings/twitter`）で、先頭・末尾のスラッシュは不要です。
 
 ### 「Not a tweet page」エラー
 
@@ -137,7 +149,8 @@ images:
 
 ### ブックマーク保存ボタンが表示されない
 
-- ブックマークページ（`https://x.com/i/bookmarks`）を開いているか確認
+- ブックマークページ（`https://x.com/i/history`）を開いているか確認
+- いいねタブ（`/i/history/likes`）ではボタンは表示されません
 - ページ読み込み後、数秒待ってからボタンが表示されます
 - 他のページに移動するとボタンは自動的に消えます
 
@@ -170,6 +183,30 @@ npm install -g web-ext
 # パッケージング
 web-ext build
 ```
+
+### 保存済みノートに引用元を後付けする
+
+引用リツイート対応より前に保存したノートには引用元の情報が入っていません。`scripts/patch-quotes.mjs` が X の公開 syndication API から取得して後付けします（Node.js 18+ が必要）。
+
+対象フォルダは環境変数 `T2O_VAULT_DIR` または `--vault` で指定します。
+
+```bash
+export T2O_VAULT_DIR="$HOME/Documents/obsidian/Clippings/twitter"
+
+# ドライラン(書き込みなし)。何件パッチされるか確認する
+node scripts/patch-quotes.mjs
+
+# 問題なければ書き込む
+node scripts/patch-quotes.mjs --apply
+```
+
+| 環境変数 | 既定値 | 説明 |
+| --- | --- | --- |
+| `T2O_VAULT_DIR` | （必須） | 対象フォルダ。`--vault <path>` が優先 |
+| `T2O_CACHE_FILE` | `scripts/.quote-patch-cache.json` | 再開用キャッシュの位置 |
+| `T2O_DELAY_MS` | `400` | リクエスト間の待機ミリ秒 |
+
+既存の本文と `created` / `updated` などのプロパティは保持されます。処理済みのツイート ID はキャッシュに記録されるため、中断しても再開できます。
 
 ## ライセンス
 
