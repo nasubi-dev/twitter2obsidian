@@ -19,12 +19,33 @@ new MutationObserver(() => {
 }).observe(document, { subtree: true, childList: true });
 
 /**
+ * Check whether the current URL shows the bookmarks timeline.
+ *
+ * X moved bookmarks under the "History" page: /i/bookmarks now redirects to
+ * /i/history, where bookmarks is the default tab and likes live at
+ * /i/history/likes. The old paths are still accepted so the button keeps
+ * working if X routes back to them (or on twitter.com).
+ */
+function isBookmarksPage() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+
+  // Legacy routes, including bookmark folders (/i/bookmarks/<folderId>)
+  if (path === "/i/bookmarks" || path.startsWith("/i/bookmarks/")) {
+    return true;
+  }
+
+  // Current route: bookmarks is the default tab of the History page.
+  // /i/history/likes is a different timeline, so it is deliberately excluded.
+  return path === "/i/history";
+}
+
+/**
  * Check if on bookmarks page and initialize button
  */
 function checkAndInitBookmarksPage() {
   const bookmarkButton = document.getElementById("obsidian-bookmark-button");
 
-  if (window.location.pathname === "/i/bookmarks") {
+  if (isBookmarksPage()) {
     // On bookmarks page - show button
     if (!bookmarkButton) {
       initBookmarksPage();
@@ -127,12 +148,31 @@ function findMainTweet() {
   // Multiple selector strategies for robustness
   const selectors = ['article[data-testid="tweet"]', 'article[role="article"]'];
 
+  // The status page also renders ancestors (when the tweet is a reply) and
+  // replies, so prefer the article whose own permalink matches the URL.
+  const idMatch = window.location.pathname.match(/\/status\/(\d+)/);
+  const tweetId = idMatch ? idMatch[1] : null;
+
   for (const selector of selectors) {
     const elements = document.querySelectorAll(selector);
-    if (elements.length > 0) {
-      // Return the first tweet article (usually the main one on status page)
-      return elements[0];
+    if (elements.length === 0) {
+      continue;
     }
+
+    if (tweetId) {
+      for (const element of elements) {
+        const links = element.querySelectorAll('a[href*="/status/"]');
+        for (const link of links) {
+          const href = link.getAttribute("href");
+          if (href && href.match(/\/status\/(\d+)/)?.[1] === tweetId) {
+            return element;
+          }
+        }
+      }
+    }
+
+    // Fallback: first tweet article (usually the main one on status page)
+    return elements[0];
   }
 
   return null;
@@ -468,6 +508,9 @@ function showToast(text, type = "success") {
     transition: "opacity 0.3s ease, transform 0.3s ease",
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif",
+    // Error details are multi-line and can be long
+    whiteSpace: "pre-line",
+    maxWidth: "420px",
   });
 
   // Add to page
@@ -479,14 +522,16 @@ function showToast(text, type = "success") {
     toast.style.transform = "translateY(0)";
   });
 
-  // Remove after 3 seconds
+  // Errors carry details worth reading, so keep them up longer
+  const visibleFor = type === "error" ? 15000 : 3000;
+
   setTimeout(() => {
     toast.style.opacity = "0";
     toast.style.transform = "translateY(-10px)";
     setTimeout(() => {
       toast.remove();
     }, 300);
-  }, 3000);
+  }, visibleFor);
 }
 
 /**
@@ -495,6 +540,10 @@ function showToast(text, type = "success") {
 function initBookmarksPage() {
   // Wait for page to load
   setTimeout(() => {
+    // The user may have switched tabs/pages while we were waiting
+    if (!isBookmarksPage()) {
+      return;
+    }
     createBookmarkSaveButton();
   }, 2000);
 }
@@ -583,14 +632,25 @@ async function saveAllBookmarks(button) {
     let saved = 0;
     let skipped = 0;
     let failed = 0;
+    // Keep the distinct reasons so a run that fails is diagnosable instead of
+    // collapsing into a bare "Failed: N" count.
+    const errorCounts = new Map();
+
+    const recordError = (tweetId, reason) => {
+      failed++;
+      console.error(`[t2o] Failed to save ${tweetId || "(unknown id)"}:`, reason);
+      errorCounts.set(reason, (errorCounts.get(reason) || 0) + 1);
+    };
 
     // Save each tweet
     for (let i = 0; i < tweetElements.length; i++) {
       const tweetElement = tweetElements[i];
+      let tweetId = null;
 
       try {
         // Extract tweet data
         const tweetData = await extractTweetFromArticle(tweetElement);
+        tweetId = tweetData.tweetId;
 
         // Send to background script to save
         const result = await browser.runtime.sendMessage({
@@ -598,16 +658,18 @@ async function saveAllBookmarks(button) {
           data: tweetData,
         });
 
-        if (result.success) {
+        if (!result) {
+          // No response at all - the background script never answered
+          recordError(tweetId, "No response from background script");
+        } else if (result.success) {
           saved++;
         } else if (result.alreadyExists) {
           skipped++;
         } else {
-          failed++;
+          recordError(tweetId, result.error || "Unknown error");
         }
       } catch (error) {
-        console.error("Error saving bookmark:", error);
-        failed++;
+        recordError(tweetId, error.message || String(error));
       }
 
       // Update progress
@@ -620,8 +682,19 @@ async function saveAllBookmarks(button) {
     // Show final result
     button.textContent = originalText;
 
-    const resultMessage = `✅ Complete! Saved: ${saved}, Skipped: ${skipped}, Failed: ${failed}`;
-    showToast(resultMessage, saved > 0 ? "success" : "info");
+    let resultMessage = `✅ Complete! Saved: ${saved}, Skipped: ${skipped}, Failed: ${failed}`;
+
+    if (failed > 0) {
+      // Surface the most common reasons directly in the toast
+      const topReasons = [...errorCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 2)
+        .map(([reason, count]) => `${reason} (x${count})`);
+      resultMessage += `\n\n${topReasons.join("\n")}`;
+      console.error("[t2o] Failure reasons:", Object.fromEntries(errorCounts));
+    }
+
+    showToast(resultMessage, saved > 0 ? "success" : failed > 0 ? "error" : "info");
   } catch (error) {
     console.error("Error saving bookmarks:", error);
     button.textContent = originalText;
