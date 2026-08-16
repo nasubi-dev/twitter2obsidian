@@ -150,20 +150,34 @@ async function saveTweetToObsidian(tweetData) {
   const markdown = generateMarkdown(tweetData);
 
   // Save to Obsidian
-  const response = await fetch(
-    `${settings.endpoint}/vault/${encodeURIComponent(filepath)}`,
-    {
+  let response;
+  try {
+    response = await fetch(buildVaultUrl(settings, filepath), {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${settings.apiKey}`,
         "Content-Type": "text/markdown",
       },
       body: markdown,
-    }
-  );
+    });
+  } catch (error) {
+    // fetch only rejects on transport-level problems, so the endpoint is
+    // unreachable rather than the request being refused by the plugin.
+    throw new Error(
+      `Cannot reach Obsidian at ${settings.endpoint} (${error.message}). ` +
+        `Check that Obsidian is running with the Local REST API plugin enabled, ` +
+        `and that the self-signed certificate for the https:// port has been ` +
+        `accepted in this browser (open ${settings.endpoint} in a tab once).`
+    );
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `Rejected by Obsidian (${response.status}): the API key is wrong or missing.`
+      );
+    }
     throw new Error(`Failed to save: ${response.status} ${errorText}`);
   }
 
@@ -171,19 +185,33 @@ async function saveTweetToObsidian(tweetData) {
 }
 
 /**
+ * Build the /vault/ URL for a vault-relative path.
+ *
+ * The path separators must stay real slashes - the REST API routes on them to
+ * reach nested folders. Encoding the whole path with encodeURIComponent turns
+ * "Clippings/twitter/foo.md" into a single "Clippings%2Ftwitter%2Ffoo.md"
+ * segment, which the API answers with 404 (errorCode 40400). So encode each
+ * segment on its own and rejoin with "/".
+ */
+function buildVaultUrl(settings, filepath) {
+  const encodedPath = filepath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${settings.endpoint}/vault/${encodedPath}`;
+}
+
+/**
  * Check if file exists in Obsidian vault
  */
 async function checkFileExists(settings, filepath) {
   try {
-    const response = await fetch(
-      `${settings.endpoint}/vault/${encodeURIComponent(filepath)}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${settings.apiKey}`,
-        },
-      }
-    );
+    const response = await fetch(buildVaultUrl(settings, filepath), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${settings.apiKey}`,
+      },
+    });
     return response.ok;
   } catch (error) {
     return false;
@@ -340,5 +368,34 @@ async function getSettings() {
   };
 
   const stored = await browser.storage.sync.get(defaultSettings);
+  stored.apiKey = normalizeApiKey(stored.apiKey);
+  stored.endpoint = normalizeEndpoint(stored.endpoint);
+  stored.folderPath = normalizeFolderPath(stored.folderPath);
   return stored;
+}
+
+/**
+ * Strip trailing slashes so `${endpoint}/vault/...` never becomes `//vault/...`,
+ * which the Local REST API answers with a redirect/404 instead of the file.
+ */
+function normalizeEndpoint(endpoint) {
+  return (endpoint || "").trim().replace(/\/+$/, "");
+}
+
+/**
+ * Strip surrounding slashes so the vault path has exactly one separator.
+ */
+function normalizeFolderPath(folderPath) {
+  return (folderPath || "").trim().replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+/**
+ * Strip a leading "Bearer " prefix so the API key can be pasted as-is,
+ * whether or not the REST API plugin includes it.
+ */
+function normalizeApiKey(apiKey) {
+  // Remove any "Bearer" tokens and all whitespace so the key can be pasted
+  // as-is (the REST API plugin shows it as "Bearer <key>"). A lowercase hex
+  // key never contains the substring "Bearer", so global removal is safe.
+  return (apiKey || "").replace(/Bearer/gi, "").replace(/\s+/g, "");
 }
