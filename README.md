@@ -38,7 +38,7 @@ Firefox 拡張機能で Twitter/X のツイートを簡単に Obsidian に保存
 1. Firefox で `about:addons` を開く
 2. 「Twitter to Obsidian」の「設定」タブをクリック
 3. 以下を設定:
-   - **API Endpoint**: Obsidian Local REST API の URL (デフォルト: `https://127.0.0.1:27124`)
+   - **API Endpoint**: Obsidian Local REST API の URL (デフォルト: `http://127.0.0.1:27123`)
    - **API Key**: Obsidian で生成した API キー
    - **Folder Path**: 保存先フォルダ (デフォルト: `Clippings/twitter`)
    - **Show Notifications**: システム通知の ON/OFF

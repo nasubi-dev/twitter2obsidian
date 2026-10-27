@@ -445,7 +445,7 @@ function showNotification(title, message, type = "success") {
  */
 async function getSettings() {
   const defaultSettings = {
-    endpoint: "https://127.0.0.1:27124",
+    endpoint: "http://127.0.0.1:27123",
     apiKey: "",
     folderPath: "Clippings/twitter",
     showNotifications: true,

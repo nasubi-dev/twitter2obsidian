@@ -46,7 +46,7 @@ document.addEventListener("DOMContentLoaded", async () => {
  */
 async function loadSettings() {
   const defaultSettings = {
-    endpoint: "https://127.0.0.1:27124",
+    endpoint: "http://127.0.0.1:27123",
     apiKey: "",
     folderPath: "Clippings/twitter",
     showNotifications: true,
