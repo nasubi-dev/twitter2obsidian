@@ -146,8 +146,15 @@ async function saveTweetToObsidian(tweetData) {
     };
   }
 
+  // Copy images into the vault first, so the note survives the post being
+  // deleted. Images that fail keep their pbs.twimg.com URL.
+  const localImages = await saveImagesToVault(settings, [
+    ...(images || []),
+    ...(tweetData.quoted?.images || []),
+  ]);
+
   // Generate markdown content
-  const markdown = generateMarkdown(tweetData);
+  const markdown = generateMarkdown({ ...tweetData, localImages });
 
   // Save to Obsidian
   let response;
@@ -182,6 +189,50 @@ async function saveTweetToObsidian(tweetData) {
   }
 
   return { success: true, filepath };
+}
+
+// Vault folder for downloaded images. Keep in sync with scripts/localize-images.mjs
+// (the vault's .gitignore excludes this folder).
+const IMAGE_FOLDER = "assets/twitter";
+
+/** Image URL without query and extension, e.g. https://pbs.twimg.com/media/<id> */
+function imageBase(url) {
+  return url.split("?")[0].replace(/\.(?:jpe?g|png|webp|gif)$/i, "");
+}
+
+/** Vault path for an image: assets/twitter/<media id>.webp */
+function imageVaultPath(url) {
+  return `${IMAGE_FOLDER}/${imageBase(url).split("/").pop()}.webp`;
+}
+
+/**
+ * Download pbs.twimg.com images (webp, large) and write them into the vault.
+ * Returns a Map of original URL -> vault path for the ones that were saved.
+ * A failure never blocks saving the note; that image just stays a URL.
+ */
+async function saveImagesToVault(settings, urls) {
+  const saved = new Map();
+  for (const url of new Set(urls)) {
+    if (!url.startsWith("https://pbs.twimg.com/")) continue;
+    try {
+      const res = await fetch(`${imageBase(url)}?format=webp&name=large`);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const filepath = imageVaultPath(url);
+      const put = await fetch(buildVaultUrl(settings, filepath), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${settings.apiKey}`,
+          "Content-Type": "image/webp",
+        },
+        body: blob,
+      });
+      if (put.ok) saved.set(url, filepath);
+    } catch (error) {
+      console.warn("Could not save image", url, error);
+    }
+  }
+  return saved;
 }
 
 /**
@@ -224,6 +275,7 @@ async function checkFileExists(settings, filepath) {
 function generateMarkdown(tweetData) {
   const { username, text, sourceUrl, images, date, tweetId, hasVideo, quoted } =
     tweetData;
+  const localImages = tweetData.localImages || new Map();
 
   let frontmatter = "---\n";
   frontmatter += `source: ${sourceUrl}\n`;
@@ -232,10 +284,7 @@ function generateMarkdown(tweetData) {
   frontmatter += `date: ${date}\n`;
 
   if (images && images.length > 0) {
-    frontmatter += "images:\n";
-    images.forEach((img) => {
-      frontmatter += `  - ${img}\n`;
-    });
+    frontmatter += imageListFrontmatter("images", "image_urls", images, localImages);
   }
 
   // Add quoted tweet info to frontmatter (one level deep)
@@ -250,10 +299,12 @@ function generateMarkdown(tweetData) {
       frontmatter += `quoted_source: ${quoted.sourceUrl}\n`;
     }
     if (quoted.images && quoted.images.length > 0) {
-      frontmatter += "quoted_images:\n";
-      quoted.images.forEach((img) => {
-        frontmatter += `  - ${img}\n`;
-      });
+      frontmatter += imageListFrontmatter(
+        "quoted_images",
+        "quoted_image_urls",
+        quoted.images,
+        localImages
+      );
     }
   }
 
@@ -271,24 +322,53 @@ function generateMarkdown(tweetData) {
     // Add images in markdown format only if no video
     body += "\n\n";
     images.forEach((img, index) => {
-      body += `![${username} - Tweet ${tweetId} - Photo ${
-        index + 1
-      }](${img})\n`;
+      body += imageEmbed(
+        `${username} - Tweet ${tweetId} - Photo ${index + 1}`,
+        img,
+        localImages
+      );
     });
   }
 
   // Append quoted tweet as a blockquote (one level deep)
   if (quoted) {
-    body += generateQuotedSection(quoted);
+    body += generateQuotedSection(quoted, localImages);
   }
 
   return frontmatter + body;
 }
 
 /**
+ * Frontmatter list for images. Saved images become "[[assets/twitter/...]]"
+ * links and their original URLs go under urlKey (same shape as
+ * scripts/localize-images.mjs writes).
+ */
+function imageListFrontmatter(key, urlKey, images, localImages) {
+  let out = `${key}:\n`;
+  images.forEach((img) => {
+    const local = localImages.get(img);
+    out += local ? `  - "[[${local}]]"\n` : `  - ${img}\n`;
+  });
+  const moved = images.filter((img) => localImages.has(img));
+  if (moved.length > 0) {
+    out += `${urlKey}:\n`;
+    moved.forEach((img) => {
+      out += `  - ${img}\n`;
+    });
+  }
+  return out;
+}
+
+/** Embed an image: the vault copy if saved, otherwise the remote URL */
+function imageEmbed(alt, img, localImages) {
+  const local = localImages.get(img);
+  return local ? `![[${local}]]\n` : `![${alt}](${img})\n`;
+}
+
+/**
  * Render a quoted tweet as a markdown blockquote section
  */
-function generateQuotedSection(quoted) {
+function generateQuotedSection(quoted, localImages = new Map()) {
   const author = quoted.handle
     ? `${quoted.username} (${quoted.handle})`
     : quoted.username;
@@ -318,7 +398,11 @@ function generateQuotedSection(quoted) {
   } else if (quoted.images && quoted.images.length > 0) {
     section += "\n";
     quoted.images.forEach((img, index) => {
-      section += `![${quoted.username} - Quoted Photo ${index + 1}](${img})\n`;
+      section += imageEmbed(
+        `${quoted.username} - Quoted Photo ${index + 1}`,
+        img,
+        localImages
+      );
     });
   }
 

@@ -13,6 +13,7 @@
     "tabs",
     "https://x.com/*",
     "https://twitter.com/*",
+    "https://pbs.twimg.com/*",
     "https://127.0.0.1/*",
     "https://localhost/*",
     "http://127.0.0.1/*",

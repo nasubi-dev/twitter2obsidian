@@ -86,15 +86,20 @@ author: Elon Musk
 text: ツイートの本文がここに入ります
 date: 2025-01-15
 images:
+  - "[[assets/twitter/xxxxx.webp]]"
+  - "[[assets/twitter/yyyyy.webp]]"
+image_urls:
   - https://pbs.twimg.com/media/xxxxx?format=jpg&name=large
   - https://pbs.twimg.com/media/yyyyy?format=jpg&name=large
 ---
 
 ツイートの本文がここに入ります
 
-![Elon Musk - Tweet 1234567890 - Photo 1](https://pbs.twimg.com/media/xxxxx?format=jpg&name=large)
-![Elon Musk - Tweet 1234567890 - Photo 2](https://pbs.twimg.com/media/yyyyy?format=jpg&name=large)
+![[assets/twitter/xxxxx.webp]]
+![[assets/twitter/yyyyy.webp]]
 ```
+
+画像は保存時に `pbs.twimg.com` から webp（large）で取得し、Vault の `assets/twitter/<メディアID>.webp` に書き込みます。元のポストが削除されても画像が残るようにするためです。元の URL は `image_urls`（引用元は `quoted_image_urls`）に残ります。画像の取得に失敗した場合は、その画像だけ従来どおり URL のまま保存し、ノートの保存は止めません。経緯は [docs/notes/画像のローカル保存.md](docs/notes/画像のローカル保存.md)。
 
 #### 動画ツイートの場合
 
@@ -205,6 +210,26 @@ node scripts/patch-quotes.mjs --apply
 | `T2O_VAULT_DIR` | （必須） | 対象フォルダ。`--vault <path>` が優先 |
 | `T2O_CACHE_FILE` | `scripts/.quote-patch-cache.json` | 再開用キャッシュの位置 |
 | `T2O_DELAY_MS` | `400` | リクエスト間の待機ミリ秒 |
+
+### 保存済みノートの画像を Vault に取り込む
+
+画像のローカル保存に対応する前のノートは、`pbs.twimg.com` の画像を URL で表示しているだけです。`scripts/localize-images.mjs` が画像を `<vault>/assets/twitter/` にダウンロードし、ノートの参照をローカルの画像に書き換えます。取得できなかった画像（ポスト削除などで 404 / 403）は URL のまま残し、frontmatter に `images_lost: true` を付けます。何度実行しても同じ結果になります。
+
+```bash
+export T2O_VAULT_DIR="$HOME/Documents/obsidian/Clippings/twitter"
+
+# ドライラン(HEAD で生死だけ確認、書き込みなし)
+node scripts/localize-images.mjs
+
+# 問題なければ書き込む
+node scripts/localize-images.mjs --apply
+```
+
+| 環境変数 | 既定値 | 説明 |
+| --- | --- | --- |
+| `T2O_VAULT_DIR` | （必須） | 対象フォルダ。`--vault <path>` が優先。Vault のルートは親をたどって `.obsidian` のある場所を使う |
+| `T2O_DELAY_MS` | `300` | リクエスト間の待機ミリ秒 |
+| `T2O_CONCURRENCY` | `3` | 同時リクエスト数 |
 
 既存の本文と `created` / `updated` などのプロパティは保持されます。処理済みのツイート ID はキャッシュに記録されるため、中断しても再開できます。
 
