@@ -10,7 +10,9 @@ browser.commands.onCommand.addListener(async (command) => {
       active: true,
       currentWindow: true,
     });
-    if (tabs[0] && tabs[0].url && tabs[0].url.includes("/status/")) {
+    // Any X page: content.js saves the tweet focused with J/K, or the
+    // tweet of a /status/ page when nothing is focused.
+    if (tabs[0] && /^https:\/\/(x|twitter)\.com\//.test(tabs[0].url || "")) {
       handleSaveTweet(tabs[0]);
     }
   }
@@ -62,6 +64,15 @@ async function handleSaveTweet(tab) {
     // Save tweet
     const saveResult = await saveTweetToObsidian(extractResult.data);
 
+    if (saveResult.success || saveResult.alreadyExists) {
+      browser.tabs
+        .sendMessage(tab.id, {
+          action: "markSaved",
+          tweetId: extractResult.data.tweetId,
+        })
+        .catch(() => {});
+    }
+
     if (saveResult.success) {
       await browser.tabs.sendMessage(tab.id, {
         action: "showToast",
@@ -109,6 +120,20 @@ async function handleSaveTweet(tab) {
 
 // Listen for messages from content script
 browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  if (message.action === "checkSaved") {
+    // Drives the chip next to the bookmark button. Any failure (no API key,
+    // Obsidian closed) just reads as "not saved".
+    try {
+      const settings = await getSettings();
+      if (!settings.apiKey || !settings.endpoint) return { saved: false };
+      return {
+        saved: await checkFileExists(settings, tweetFilepath(settings, message.data)),
+      };
+    } catch (error) {
+      return { saved: false };
+    }
+  }
+
   if (message.action === "saveTweet") {
     try {
       const result = await saveTweetToObsidian(message.data);
@@ -119,6 +144,11 @@ browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
   }
 });
+
+/** Vault path of a tweet's note: {folder}/{username}-{tweetId}.md */
+function tweetFilepath(settings, { username, tweetId }) {
+  return `${settings.folderPath}/${username}-${tweetId}.md`;
+}
 
 /**
  * Save tweet to Obsidian via Local REST API
@@ -132,9 +162,7 @@ async function saveTweetToObsidian(tweetData) {
 
   const { username, tweetId, text, sourceUrl, images, date } = tweetData;
 
-  // Generate filename: {username}-{tweetId}.md
-  const filename = `${username}-${tweetId}.md`;
-  const filepath = `${settings.folderPath}/${filename}`;
+  const filepath = tweetFilepath(settings, tweetData);
 
   // Check if file already exists
   const exists = await checkFileExists(settings, filepath);

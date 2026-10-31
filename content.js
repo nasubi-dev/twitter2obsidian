@@ -70,6 +70,11 @@ browser.runtime.onMessage.addListener(async (message) => {
     }
   }
 
+  if (message.action === "markSaved") {
+    markTweetSaved(message.tweetId);
+    return Promise.resolve({ success: true });
+  }
+
   if (message.action === "showToast") {
     showToast(message.text, message.type);
     return Promise.resolve({ success: true });
@@ -90,12 +95,21 @@ browser.runtime.onMessage.addListener(async (message) => {
  * Extract tweet information from current page
  */
 async function extractCurrentTweet() {
+  // A tweet selected with X's J/K shortcuts (or otherwise focused) wins, so
+  // the shortcut works on timelines, bookmarks, search and replies alike.
+  const focused = findFocusedTweet();
+  if (focused) {
+    return extractTweetFromArticle(focused);
+  }
+
   // Check if we're on a tweet page
   const url = window.location.href;
   const tweetIdMatch = url.match(/\/status\/(\d+)/);
 
   if (!tweetIdMatch) {
-    throw new Error("Not a tweet page. Please navigate to a specific tweet.");
+    throw new Error(
+      "No tweet selected. Press J/K to select a tweet, or open a tweet page."
+    );
   }
 
   const tweetId = tweetIdMatch[1];
@@ -139,6 +153,22 @@ async function extractCurrentTweet() {
     hasVideo,
     quoted,
   };
+}
+
+/**
+ * The tweet article that currently has keyboard focus.
+ *
+ * X's J/K shortcuts move focus onto the tweet's <article> (it has
+ * tabindex="0"), so document.activeElement is the article itself. Focus can
+ * also sit on something inside it (e.g. after clicking a button), hence
+ * closest(). Returns null when nothing in a tweet is focused.
+ */
+function findFocusedTweet() {
+  const active = document.activeElement;
+  if (!active || active === document.body) return null;
+  const article = active.closest('article[data-testid="tweet"]');
+  // closest() on a quoted card's inner node still lands on the outer article
+  return article && document.contains(article) ? article : null;
 }
 
 /**
@@ -747,28 +777,16 @@ async function collectAllBookmarks(button) {
  * Extract tweet data from article element
  */
 async function extractTweetFromArticle(tweetElement) {
-  // Extract tweet URL to get ID
-  const links = tweetElement.querySelectorAll('a[href*="/status/"]');
-  let tweetId = null;
-  let tweetUrl = null;
-
-  for (const link of links) {
-    const href = link.getAttribute("href");
-    const match = href.match(/\/status\/(\d+)/);
-    if (match) {
-      tweetId = match[1];
-      tweetUrl = "https://x.com" + href.split("?")[0];
-      break;
-    }
-  }
-
-  if (!tweetId) {
-    throw new Error("Could not find tweet ID");
-  }
-
   // Detect embedded quote tweet (one level deep) and extract it separately
   const quotedCard = findQuotedTweet(tweetElement);
   const quoted = quotedCard ? extractQuotedTweet(quotedCard) : null;
+
+  const permalink = findPermalink(tweetElement, quotedCard);
+  if (!permalink) {
+    throw new Error("Could not find tweet ID");
+  }
+  const tweetId = permalink.match(/\/status\/(\d+)/)[1];
+  const tweetUrl = "https://x.com" + permalink;
 
   // Extract other data (excluding the quoted card's content)
   const text = extractTweetText(tweetElement, quotedCard);
@@ -792,4 +810,177 @@ async function extractTweetFromArticle(tweetElement) {
     hasVideo,
     quoted,
   };
+}
+
+/**
+ * "/<user>/status/<id>" of the tweet itself, ignoring the quoted card.
+ *
+ * The timestamp link is the tweet's permalink. Taking the first status link
+ * instead can pick up the quoted card's photo link, because on a status page
+ * the main tweet's timestamp sits in the footer, after the quoted card.
+ */
+function findPermalink(tweetElement, quotedCard) {
+  const outside = (el) => !(quotedCard && quotedCard.contains(el));
+  const toPath = (href) => href?.match(/\/[^/?#]+\/status\/\d+/)?.[0] || null;
+
+  for (const time of tweetElement.querySelectorAll("time")) {
+    if (!outside(time)) continue;
+    const path = toPath(time.closest("a")?.getAttribute("href"));
+    if (path) return path;
+  }
+
+  // Fallback: first status link outside the quoted card
+  for (const link of tweetElement.querySelectorAll('a[href*="/status/"]')) {
+    if (!outside(link)) continue;
+    const path = toPath(link.getAttribute("href"));
+    if (path) return path;
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------------
+ * "Saved" indicator
+ *
+ * Tweets already in the vault get a small purple dot. It is display-only
+ * (saving is Alt+O) and never takes up layout space, so nothing on the page
+ * moves when it appears:
+ * - timeline: absolutely positioned just left of the bookmark icon
+ * - status page's main tweet: appended to the end of the timestamp row
+ *   ("3:03 PM · Oct 31, 2026 · 3.3M Views · ● Saved")
+ * --------------------------------------------------------------------- */
+
+const INDICATOR_CLASS = "t2o-saved";
+const SAVED_COLOR = "#a882ff"; // Obsidian purple
+
+/** tweetId -> true (saved) | false (not saved) | "pending" (asking) */
+const savedState = new Map();
+let indicatorScanQueued = false;
+
+injectIndicatorStyles();
+scheduleIndicatorScan();
+new MutationObserver(scheduleIndicatorScan).observe(document.body, {
+  childList: true,
+  subtree: true,
+});
+
+function scheduleIndicatorScan() {
+  if (indicatorScanQueued) return;
+  indicatorScanQueued = true;
+  requestAnimationFrame(() => {
+    indicatorScanQueued = false;
+    document
+      .querySelectorAll('article[data-testid="tweet"]')
+      .forEach(updateIndicator);
+  });
+}
+
+function injectIndicatorStyles() {
+  if (document.getElementById("t2o-saved-style")) return;
+  const style = document.createElement("style");
+  style.id = "t2o-saved-style";
+  style.textContent = `
+    .${INDICATOR_CLASS}-dot {
+      position: absolute; top: 50%; right: 100%; margin-right: 6px;
+      width: 6px; height: 6px; border-radius: 9999px;
+      transform: translateY(-50%); background: ${SAVED_COLOR};
+      pointer-events: none;
+    }
+    .${INDICATOR_CLASS}-row {
+      color: rgb(113, 118, 123); white-space: nowrap; pointer-events: none;
+    }
+    .${INDICATOR_CLASS}-label::before {
+      content: ""; display: inline-block; width: 6px; height: 6px;
+      margin: 0 4px 0 0; border-radius: 9999px; vertical-align: middle;
+      background: ${SAVED_COLOR};
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function articleTweetId(article) {
+  const path = findPermalink(article, findQuotedTweet(article));
+  return path ? path.match(/\/status\/(\d+)/)[1] : null;
+}
+
+function updateIndicator(article) {
+  const tweetId = articleTweetId(article);
+  if (!tweetId) return;
+
+  const state = savedState.get(tweetId);
+  if (state === undefined) {
+    savedState.set(tweetId, "pending");
+    askSaved(article, tweetId);
+    return;
+  }
+  if (state === true && !article.querySelector(`.${INDICATOR_CLASS}`)) {
+    placeIndicator(article, tweetId);
+  }
+}
+
+async function askSaved(article, tweetId) {
+  let saved = false;
+  try {
+    const data = await extractTweetFromArticle(article);
+    const result = await browser.runtime.sendMessage({ action: "checkSaved", data });
+    saved = !!result?.saved;
+  } catch (e) {
+    // Treat as not saved
+  }
+  // A save may have landed while we were asking
+  if (savedState.get(tweetId) !== true) savedState.set(tweetId, saved);
+  scheduleIndicatorScan();
+}
+
+function placeIndicator(article, tweetId) {
+  const onStatusPage =
+    window.location.pathname.match(/\/status\/(\d+)/)?.[1] === tweetId;
+
+  if (onStatusPage) {
+    // Main tweet: the timestamp link sits in a row with "· N Views"
+    const time = [...article.querySelectorAll("time")].find((t) =>
+      t.closest("a")?.getAttribute("href")?.includes(`/status/${tweetId}`)
+    );
+    const row = time?.closest("a")?.parentElement?.parentElement;
+    if (row) {
+      const label = document.createElement("span");
+      label.className = `${INDICATOR_CLASS} ${INDICATOR_CLASS}-row`;
+      label.textContent = " · ";
+      const text = document.createElement("span");
+      text.className = `${INDICATOR_CLASS}-label`;
+      text.textContent = "Saved";
+      label.appendChild(text);
+      row.appendChild(label);
+      return;
+    }
+  }
+
+  const bar = findActionBar(article);
+  const bookmark = bar?.querySelector(
+    '[data-testid="bookmark"], [data-testid="removeBookmark"]'
+  );
+  if (!bookmark) return; // not rendered yet; the next scan retries
+  const dot = document.createElement("span");
+  dot.className = `${INDICATOR_CLASS} ${INDICATOR_CLASS}-dot`;
+  dot.title = "Saved in Obsidian";
+  // The button is position: relative with overflow visible, so the dot can
+  // hang off its left edge without affecting the row's layout.
+  bookmark.appendChild(dot);
+}
+
+/** The tweet's own action bar (reply/repost/like/.../bookmark/share). */
+function findActionBar(article) {
+  const quotedCard = findQuotedTweet(article);
+  for (const group of article.querySelectorAll('[role="group"]')) {
+    if (quotedCard && quotedCard.contains(group)) continue;
+    if (group.querySelector('[data-testid="bookmark"], [data-testid="removeBookmark"]')) {
+      return group;
+    }
+  }
+  return null;
+}
+
+/** Called after a save (Alt+O or page action) succeeds or finds the note. */
+function markTweetSaved(tweetId) {
+  savedState.set(tweetId, true);
+  scheduleIndicatorScan();
 }
