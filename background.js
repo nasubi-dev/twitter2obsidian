@@ -120,6 +120,13 @@ async function handleSaveTweet(tab) {
 
 // Listen for messages from content script
 browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  if (message.action === "saveShortcut") {
+    // Plain "o" pressed on an X page (content.js listens for it, because
+    // manifest commands can't bind a key without a modifier).
+    if (sender.tab) handleSaveTweet(sender.tab);
+    return;
+  }
+
   if (message.action === "checkSaved") {
     // Drives the chip next to the bookmark button. Any failure (no API key,
     // Obsidian closed) just reads as "not saved".

@@ -58,6 +58,29 @@ function checkAndInitBookmarksPage() {
   }
 }
 
+// Plain "o" saves the selected tweet, like X's own single-key shortcuts.
+// Captured on window so it runs before X's handler ("o" = expand photo).
+window.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key !== "o" || event.repeat) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.isComposing) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      (target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])") ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    browser.runtime.sendMessage({ action: "saveShortcut" });
+  },
+  true
+);
+
 // Listen for messages from popup or background
 browser.runtime.onMessage.addListener(async (message) => {
   if (message.action === "extractTweet") {
@@ -842,7 +865,7 @@ function findPermalink(tweetElement, quotedCard) {
  * "Saved" indicator
  *
  * Tweets already in the vault get a small purple dot. It is display-only
- * (saving is Alt+O) and never takes up layout space, so nothing on the page
+ * (saving is O or Alt+O) and never takes up layout space, so nothing on the page
  * moves when it appears:
  * - timeline: absolutely positioned just left of the bookmark icon
  * - status page's main tweet: appended to the end of the timestamp row
@@ -979,7 +1002,7 @@ function findActionBar(article) {
   return null;
 }
 
-/** Called after a save (Alt+O or page action) succeeds or finds the note. */
+/** Called after a save (O, Alt+O or page action) succeeds or finds the note. */
 function markTweetSaved(tweetId) {
   savedState.set(tweetId, true);
   scheduleIndicatorScan();
