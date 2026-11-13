@@ -7,6 +7,7 @@ Firefox 拡張機能で Twitter/X のツイートを簡単に Obsidian に保存
 - 🐦 Twitter/X のツイートをワンクリックで保存
 - 📚 ブックマークを一括で Obsidian に保存（無限スクロール対応）
 - ⌨️ キーボードショートカット（`O`、または `Alt+O`）で素早く保存。タイムラインでは X の `J`/`K` で選んだツイートを保存
+- 📂 `Cmd+O` のあと `1`・`2`・`3` で保存先のフォルダを選んで保存（フォルダは設定で 3 つまで）
 - 🟣 Vault に保存済みのツイートに小さな紫の丸を表示（タイムラインはブックマークの左、詳細ページは日時の行の末尾）
 - 📝 Frontmatter 付き Markdown ファイルとして保存
 - 🖼️ ツイート内の画像 URL も自動保存
@@ -52,7 +53,8 @@ AMO の JWT 鍵は 1Password の「AMO JWT」に置き、拡張機能をまた�
 3. 以下を設定:
    - **API Endpoint**: Obsidian Local REST API の URL (デフォルト: `http://127.0.0.1:27123`)
    - **API Key**: Obsidian で生成した API キー
-   - **Folder Path**: 保存先フォルダ (デフォルト: `Clippings/twitter`)
+   - **Folder Path（1）**: 保存先フォルダ (デフォルト: `Clippings/twitter`)。`O`・`Alt+O`・`Cmd+O → 1` の保存先
+   - **Folder Path（2）・（3）**: `Cmd+O → 2`・`Cmd+O → 3` の保存先 (デフォルト: `Clippings/tech`・`Clippings/knowledge`)。空にするとその番号は選べない
    - **Show Notifications**: システム通知の ON/OFF
 4. 「Test Connection」で接続確認
 5. 「Save Settings」で設定を保存
@@ -73,6 +75,15 @@ AMO の JWT 鍵は 1Password の「AMO JWT」に置き、拡張機能をまた�
 3. 成功するとページ内にトースト通知が表示されます
 
 キーは `about:addons` → 歯車メニュー →「拡張機能のショートカットキーを管理」で変えられます。
+
+#### 方法 3: 保存先を選んで保存（Cmd+O → 1・2・3）
+
+1. 方法 2 と同じように、保存したいツイートを選ぶ
+2. `Cmd+O` を押す。トーストに「1: Clippings/twitter / 2: … / 3: …」と出る
+3. `Cmd` を離してから `1`・`2`・`3` のどれかを押すと、そのフォルダに保存する（`Cmd` を押したままだと Firefox のタブ切り替えになる）
+4. やめるときは `Esc`。4 秒たっても番号を押さなければやめる
+
+X のページでは `Cmd+O`（Firefox の「ファイルを開く」）を拡張が受け取る。入力欄にカーソルがあるときは何もしない。保存済みの紫の丸は、3 つのフォルダのどこかにあれば付く。
 
 #### 保存済みの表示
 
