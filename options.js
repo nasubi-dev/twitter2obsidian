@@ -49,6 +49,8 @@ async function loadSettings() {
     endpoint: "http://127.0.0.1:27123",
     apiKey: "",
     folderPath: "Clippings/twitter",
+    folderPath2: "Clippings/tech",
+    folderPath3: "Clippings/knowledge",
     showNotifications: true,
   };
 
@@ -57,6 +59,8 @@ async function loadSettings() {
   document.getElementById("endpoint").value = settings.endpoint;
   document.getElementById("apiKey").value = settings.apiKey;
   document.getElementById("folderPath").value = settings.folderPath;
+  document.getElementById("folderPath2").value = settings.folderPath2;
+  document.getElementById("folderPath3").value = settings.folderPath3;
   document.getElementById("showNotifications").checked =
     settings.showNotifications;
 }
@@ -79,6 +83,12 @@ async function handleSaveSettings(event) {
       apiKey: normalizeApiKey(document.getElementById("apiKey").value),
       folderPath: normalizeFolderPath(
         document.getElementById("folderPath").value
+      ),
+      folderPath2: normalizeFolderPath(
+        document.getElementById("folderPath2").value
+      ),
+      folderPath3: normalizeFolderPath(
+        document.getElementById("folderPath3").value
       ),
       showNotifications: document.getElementById("showNotifications").checked,
     };

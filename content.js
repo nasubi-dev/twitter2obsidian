@@ -81,6 +81,85 @@ window.addEventListener(
   true
 );
 
+// Cmd+O, then 1/2/3 picks the folder (Folder Path 1〜3 in the settings).
+// Esc or 4 seconds without a number cancels. Cmd+O would otherwise open
+// Firefox's "Open File" dialog, so it is swallowed on X pages.
+const PICK_TIMEOUT_MS = 4000;
+let folderPick = null; // { folders, timer } while waiting for 1/2/3
+
+function isTypingTarget(target) {
+  return (
+    target instanceof Element &&
+    (target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])") ||
+      target.isContentEditable)
+  );
+}
+
+function endFolderPick(message) {
+  if (!folderPick) return;
+  clearTimeout(folderPick.timer);
+  folderPick = null;
+  if (message) showToast(message, "default");
+}
+
+window.addEventListener(
+  "keydown",
+  async (event) => {
+    if (event.isComposing || event.repeat) return;
+
+    // Waiting for 1/2/3 after Cmd+O
+    if (folderPick) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        endFolderPick("保存をやめました");
+        return;
+      }
+      const slot = ["1", "2", "3"].indexOf(event.key) + 1;
+      if (slot > 0 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const folder = folderPick.folders[slot - 1];
+        if (!folder) {
+          showToast(`${slot} は設定されていません（設定の Folder Path（${slot}））`, "error");
+          return; // keep waiting for another number
+        }
+        endFolderPick();
+        browser.runtime.sendMessage({ action: "saveShortcut", slot });
+      }
+      return;
+    }
+
+    const isCmdO =
+      (event.key === "o" || event.key === "O") &&
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!isCmdO || isTypingTarget(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    let folders = [];
+    try {
+      ({ folders } = await browser.runtime.sendMessage({ action: "getFolderSlots" }));
+    } catch (error) {
+      showToast("❌ 設定を読めませんでした", "error");
+      return;
+    }
+    const choices = folders
+      .map((folder, i) => (folder ? `${i + 1}: ${folder}` : null))
+      .filter(Boolean)
+      .join("  /  ");
+    showToast(`保存先を選ぶ → ${choices}（Esc でやめる）`, "info");
+    folderPick = {
+      folders,
+      timer: setTimeout(() => endFolderPick("保存をやめました（時間切れ）"), PICK_TIMEOUT_MS),
+    };
+  },
+  true
+);
+
 // Listen for messages from popup or background
 browser.runtime.onMessage.addListener(async (message) => {
   if (message.action === "extractTweet") {

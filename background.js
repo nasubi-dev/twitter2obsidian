@@ -36,8 +36,9 @@ browser.pageAction.onClicked.addListener(async (tab) => {
 
 /**
  * Handle save tweet action (from icon click or keyboard shortcut)
+ * slot: 1〜3（Cmd+O のあとに押した番号）。省略すると 1 番のフォルダ
  */
-async function handleSaveTweet(tab) {
+async function handleSaveTweet(tab, slot = 1) {
   try {
     // Show loading toast
     await browser.tabs.sendMessage(tab.id, {
@@ -62,7 +63,7 @@ async function handleSaveTweet(tab) {
     }
 
     // Save tweet
-    const saveResult = await saveTweetToObsidian(extractResult.data);
+    const saveResult = await saveTweetToObsidian(extractResult.data, slot);
 
     if (saveResult.success || saveResult.alreadyExists) {
       browser.tabs
@@ -123,8 +124,15 @@ browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.action === "saveShortcut") {
     // Plain "o" pressed on an X page (content.js listens for it, because
     // manifest commands can't bind a key without a modifier).
-    if (sender.tab) handleSaveTweet(sender.tab);
+    // Cmd+O → 1/2/3 also arrives here with message.slot set.
+    if (sender.tab) handleSaveTweet(sender.tab, message.slot || 1);
     return;
+  }
+
+  if (message.action === "getFolderSlots") {
+    // content.js shows these in the Cmd+O picker toast.
+    const settings = await getSettings();
+    return { folders: folderSlots(settings) };
   }
 
   if (message.action === "checkSaved") {
@@ -133,9 +141,13 @@ browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     try {
       const settings = await getSettings();
       if (!settings.apiKey || !settings.endpoint) return { saved: false };
-      return {
-        saved: await checkFileExists(settings, tweetFilepath(settings, message.data)),
-      };
+      // Saved in any of the 1〜3 folders counts as saved.
+      for (const folder of folderSlots(settings)) {
+        if (folder && (await checkFileExists(settings, tweetFilepath(folder, message.data)))) {
+          return { saved: true };
+        }
+      }
+      return { saved: false };
     } catch (error) {
       return { saved: false };
     }
@@ -153,23 +165,34 @@ browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 });
 
 /** Vault path of a tweet's note: {folder}/{username}-{tweetId}.md */
-function tweetFilepath(settings, { username, tweetId }) {
-  return `${settings.folderPath}/${username}-${tweetId}.md`;
+function tweetFilepath(folder, { username, tweetId }) {
+  return `${folder}/${username}-${tweetId}.md`;
+}
+
+/** Folders for slots 1〜3 (index 0〜2). An empty string means the slot is unused. */
+function folderSlots(settings) {
+  return [settings.folderPath, settings.folderPath2, settings.folderPath3];
 }
 
 /**
  * Save tweet to Obsidian via Local REST API
+ * slot: 1〜3。空のフォルダの番号を選んだときはエラーにする
  */
-async function saveTweetToObsidian(tweetData) {
+async function saveTweetToObsidian(tweetData, slot = 1) {
   const settings = await getSettings();
 
   if (!settings.apiKey || !settings.endpoint) {
     throw new Error("Please configure API settings first");
   }
 
+  const folder = folderSlots(settings)[slot - 1];
+  if (!folder) {
+    throw new Error(`Folder Path（${slot}）が設定されていません`);
+  }
+
   const { username, tweetId, text, sourceUrl, images, date } = tweetData;
 
-  const filepath = tweetFilepath(settings, tweetData);
+  const filepath = tweetFilepath(folder, tweetData);
 
   // Check if file already exists
   const exists = await checkFileExists(settings, filepath);
@@ -483,6 +506,8 @@ async function getSettings() {
     endpoint: "http://127.0.0.1:27123",
     apiKey: "",
     folderPath: "Clippings/twitter",
+    folderPath2: "Clippings/tech",
+    folderPath3: "Clippings/knowledge",
     showNotifications: true,
   };
 
@@ -490,6 +515,8 @@ async function getSettings() {
   stored.apiKey = normalizeApiKey(stored.apiKey);
   stored.endpoint = normalizeEndpoint(stored.endpoint);
   stored.folderPath = normalizeFolderPath(stored.folderPath);
+  stored.folderPath2 = normalizeFolderPath(stored.folderPath2);
+  stored.folderPath3 = normalizeFolderPath(stored.folderPath3);
   return stored;
 }
 
