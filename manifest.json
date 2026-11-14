@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Twitter to Obsidian",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Save Twitter/X tweets to Obsidian vault using Local REST API",
   "icons": {
     "48": "icons/favicon.ico",
@@ -14,6 +14,8 @@
     "https://x.com/*",
     "https://twitter.com/*",
     "https://pbs.twimg.com/*",
+    "https://api.fxtwitter.com/*",
+    "https://video.twimg.com/*",
     "https://127.0.0.1/*",
     "https://localhost/*",
     "http://127.0.0.1/*",
