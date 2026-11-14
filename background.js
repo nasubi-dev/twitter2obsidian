@@ -211,8 +211,19 @@ async function saveTweetToObsidian(tweetData, slot = 1) {
     ...(tweetData.quoted?.images || []),
   ]);
 
+  // Same for videos (mp4 via the fxtwitter API). Failures keep the X link only.
+  const { videos: localVideos, quotedVideos: localQuotedVideos } =
+    tweetData.hasVideo || tweetData.quoted?.hasVideo
+      ? await saveVideosToVault(settings, tweetId)
+      : { videos: [], quotedVideos: [] };
+
   // Generate markdown content
-  const markdown = generateMarkdown({ ...tweetData, localImages });
+  const markdown = generateMarkdown({
+    ...tweetData,
+    localImages,
+    localVideos,
+    localQuotedVideos,
+  });
 
   // Save to Obsidian
   let response;
@@ -293,6 +304,124 @@ async function saveImagesToVault(settings, urls) {
   return saved;
 }
 
+// Videos: highest variant at or below this height, skipped above MAX_VIDEO_BYTES.
+// X's mp4 is already small (35 s at 720p is about 2.3 MB); re-encoding to webm
+// made it larger, so the mp4 is saved as is. See docs/notes/動画のローカル保存.md
+const MAX_VIDEO_HEIGHT = 720;
+const MAX_VIDEO_BYTES = 30 * 1024 * 1024;
+
+/** Height of a video.twimg.com variant from its "/<w>x<h>/" path part, or null */
+function variantHeight(url) {
+  const m = url.match(/\/(\d+)x(\d+)\//);
+  return m ? Number(m[2]) : null;
+}
+
+/**
+ * Pick the mp4 variant to save from an fxtwitter video object:
+ * the tallest at or below MAX_VIDEO_HEIGHT, else the shortest.
+ * Variants without a size in the URL (GIFs) rank by bitrate.
+ */
+function pickVideoVariant(video) {
+  const mp4s = (video?.variants || []).filter(
+    (v) => v.content_type === "video/mp4" && v.url
+  );
+  if (mp4s.length === 0) return video?.url || null;
+  const sized = mp4s.map((v) => ({ ...v, h: variantHeight(v.url) }));
+  const known = sized.filter((v) => v.h !== null);
+  if (known.length === 0) {
+    return sized.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0].url;
+  }
+  const fits = known.filter((v) => v.h <= MAX_VIDEO_HEIGHT);
+  if (fits.length > 0) {
+    return fits.sort((a, b) => b.h - a.h || (b.bitrate || 0) - (a.bitrate || 0))[0].url;
+  }
+  return known.sort((a, b) => a.h - b.h)[0].url;
+}
+
+/**
+ * Media id of a video.twimg.com URL:
+ * ext_tw_video/<id>/..., amplify_video/<id>/..., tweet_video/<name>.mp4
+ */
+function videoMediaId(url) {
+  const path = url.split("?")[0];
+  const m = path.match(/\/(?:ext_tw_video|amplify_video)\/(\d+)\//);
+  if (m) return m[1];
+  const t = path.match(/\/tweet_video\/([^/]+)\.mp4$/);
+  return t ? t[1] : null;
+}
+
+/** Vault path for a video: assets/twitter/<media id>.mp4 */
+function videoVaultPath(url) {
+  const id = videoMediaId(url);
+  return id ? `${IMAGE_FOLDER}/${id}.mp4` : null;
+}
+
+/** Download one mp4 and PUT it into the vault. Returns the vault path or null. */
+async function saveVideoToVault(settings, url) {
+  const filepath = videoVaultPath(url);
+  if (!filepath) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const length = Number(res.headers.get("content-length") || 0);
+    if (length > MAX_VIDEO_BYTES) {
+      res.body?.cancel();
+      return null;
+    }
+    const blob = await res.blob();
+    if (blob.size > MAX_VIDEO_BYTES) return null;
+    const put = await fetch(buildVaultUrl(settings, filepath), {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${settings.apiKey}`,
+        "Content-Type": "video/mp4",
+      },
+      body: blob,
+    });
+    return put.ok ? filepath : null;
+  } catch (error) {
+    console.warn("Could not save video", url, error);
+    return null;
+  }
+}
+
+/**
+ * Look up the tweet on the fxtwitter API and save its videos (and the quoted
+ * tweet's) into the vault. Returns the vault paths that were saved.
+ * Never throws: on any failure the note just keeps the link to X.
+ */
+async function saveVideosToVault(settings, tweetId) {
+  const result = { videos: [], quotedVideos: [] };
+  if (!tweetId) return result;
+  let tweet;
+  try {
+    const res = await fetch(`https://api.fxtwitter.com/status/${tweetId}`);
+    if (!res.ok) return result;
+    tweet = (await res.json()).tweet;
+  } catch (error) {
+    console.warn("Could not look up videos", tweetId, error);
+    return result;
+  }
+  const save = async (videos) => {
+    const paths = [];
+    for (const video of videos || []) {
+      const url = pickVideoVariant(video);
+      const path = url && (await saveVideoToVault(settings, url));
+      if (path && !paths.includes(path)) paths.push(path);
+    }
+    return paths;
+  };
+  result.videos = await save(tweet?.media?.videos);
+  result.quotedVideos = await save(tweet?.quote?.media?.videos);
+  return result;
+}
+
+/** Frontmatter list of saved videos as "[[assets/twitter/<id>.mp4]]" */
+function videoListFrontmatter(key, paths) {
+  if (!paths || paths.length === 0) return "";
+  return `${key}:\n` + paths.map((p) => `  - "[[${p}]]"\n`).join("");
+}
+
 /**
  * Build the /vault/ URL for a vault-relative path.
  *
@@ -334,6 +463,8 @@ function generateMarkdown(tweetData) {
   const { username, text, sourceUrl, images, date, tweetId, hasVideo, quoted } =
     tweetData;
   const localImages = tweetData.localImages || new Map();
+  const localVideos = tweetData.localVideos || [];
+  const localQuotedVideos = tweetData.localQuotedVideos || [];
 
   let frontmatter = "---\n";
   frontmatter += `source: ${sourceUrl}\n`;
@@ -344,6 +475,7 @@ function generateMarkdown(tweetData) {
   if (images && images.length > 0) {
     frontmatter += imageListFrontmatter("images", "image_urls", images, localImages);
   }
+  frontmatter += videoListFrontmatter("videos", localVideos);
 
   // Add quoted tweet info to frontmatter (one level deep)
   if (quoted) {
@@ -364,6 +496,7 @@ function generateMarkdown(tweetData) {
         localImages
       );
     }
+    frontmatter += videoListFrontmatter("quoted_videos", localQuotedVideos);
   }
 
   frontmatter += "---\n\n";
@@ -375,7 +508,14 @@ function generateMarkdown(tweetData) {
   if (hasVideo) {
     body += "\n\n";
     body += `🎥 [Watch Video on X](${sourceUrl})\n\n`;
-    body += `<iframe src="${sourceUrl}" width="550" height="700" frameborder="0" allowfullscreen></iframe>`;
+    if (localVideos.length > 0) {
+      // The vault copy plays in Obsidian even after the post is gone
+      localVideos.forEach((p) => {
+        body += `![[${p}]]\n`;
+      });
+    } else {
+      body += `<iframe src="${sourceUrl}" width="550" height="700" frameborder="0" allowfullscreen></iframe>`;
+    }
   } else if (images && images.length > 0) {
     // Add images in markdown format only if no video
     body += "\n\n";
@@ -390,7 +530,7 @@ function generateMarkdown(tweetData) {
 
   // Append quoted tweet as a blockquote (one level deep)
   if (quoted) {
-    body += generateQuotedSection(quoted, localImages);
+    body += generateQuotedSection(quoted, localImages, localQuotedVideos);
   }
 
   return frontmatter + body;
@@ -426,7 +566,7 @@ function imageEmbed(alt, img, localImages) {
 /**
  * Render a quoted tweet as a markdown blockquote section
  */
-function generateQuotedSection(quoted, localImages = new Map()) {
+function generateQuotedSection(quoted, localImages = new Map(), localVideos = []) {
   const author = quoted.handle
     ? `${quoted.username} (${quoted.handle})`
     : quoted.username;
@@ -453,6 +593,9 @@ function generateQuotedSection(quoted, localImages = new Map()) {
   // Quoted video link / images
   if (quoted.hasVideo && quoted.sourceUrl) {
     section += `\n🎥 [Watch Video on X](${quoted.sourceUrl})\n`;
+    localVideos.forEach((p) => {
+      section += `![[${p}]]\n`;
+    });
   } else if (quoted.images && quoted.images.length > 0) {
     section += "\n";
     quoted.images.forEach((img, index) => {
