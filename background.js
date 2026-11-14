@@ -204,22 +204,43 @@ async function saveTweetToObsidian(tweetData, slot = 1) {
     };
   }
 
+  // The page only renders the first few photos of a post (X allows up to 20),
+  // so take the full media list from the fxtwitter API and keep the DOM
+  // list as the fallback when the lookup fails.
+  const fxTweet = await lookupTweet(tweetId);
+  const allImages = mergeImages(images, fxTweet?.media);
+  // A video past the rendered grid has no player in the DOM, so trust the API too.
+  const hasVideo =
+    tweetData.hasVideo || (fxTweet?.media?.videos?.length || 0) > 0;
+  const quoted = tweetData.quoted
+    ? {
+        ...tweetData.quoted,
+        images: mergeImages(tweetData.quoted.images, fxTweet?.quote?.media),
+        hasVideo:
+          tweetData.quoted.hasVideo ||
+          (fxTweet?.quote?.media?.videos?.length || 0) > 0,
+      }
+    : tweetData.quoted;
+
   // Copy images into the vault first, so the note survives the post being
   // deleted. Images that fail keep their pbs.twimg.com URL.
   const localImages = await saveImagesToVault(settings, [
-    ...(images || []),
-    ...(tweetData.quoted?.images || []),
+    ...allImages,
+    ...(quoted?.images || []),
   ]);
 
   // Same for videos (mp4 via the fxtwitter API). Failures keep the X link only.
   const { videos: localVideos, quotedVideos: localQuotedVideos } =
-    tweetData.hasVideo || tweetData.quoted?.hasVideo
-      ? await saveVideosToVault(settings, tweetId)
+    hasVideo || quoted?.hasVideo
+      ? await saveVideosToVault(settings, fxTweet)
       : { videos: [], quotedVideos: [] };
 
   // Generate markdown content
   const markdown = generateMarkdown({
     ...tweetData,
+    hasVideo,
+    images: allImages,
+    quoted,
     localImages,
     localVideos,
     localQuotedVideos,
@@ -386,22 +407,53 @@ async function saveVideoToVault(settings, url) {
 }
 
 /**
- * Look up the tweet on the fxtwitter API and save its videos (and the quoted
- * tweet's) into the vault. Returns the vault paths that were saved.
+ * The tweet object from the fxtwitter API (media.all lists every photo and
+ * video in order, quote holds the quoted tweet), or null on any failure.
+ */
+async function lookupTweet(tweetId) {
+  if (!tweetId) return null;
+  try {
+    const res = await fetch(`https://api.fxtwitter.com/status/${tweetId}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()).tweet || null;
+  } catch (error) {
+    console.warn("Could not look up tweet", tweetId, error);
+    return null;
+  }
+}
+
+/**
+ * Every image of a post in display order: photos and video/GIF thumbnails
+ * from fxtwitter media.all, then any DOM-only image the API did not list.
+ * URLs use the same "<base>?format=jpg&name=large" form as content.js.
+ */
+function mergeImages(domImages, media) {
+  const dom = domImages || [];
+  const fromApi = (media?.all || [])
+    .map((m) => (m.type === "photo" ? m.url : m.thumbnail_url))
+    .filter((u) => u && u.startsWith("https://pbs.twimg.com/"))
+    .map((u) => `${imageBase(u)}?format=jpg&name=large`);
+  const out = [];
+  const seen = new Set();
+  for (const url of [...fromApi, ...dom]) {
+    const key = imageBase(url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(url);
+  }
+  return out;
+}
+
+/**
+ * Save the videos of an fxtwitter tweet object (and its quoted tweet's) into
+ * the vault. Returns the vault paths that were saved.
  * Never throws: on any failure the note just keeps the link to X.
  */
-async function saveVideosToVault(settings, tweetId) {
+async function saveVideosToVault(settings, tweet) {
   const result = { videos: [], quotedVideos: [] };
-  if (!tweetId) return result;
-  let tweet;
-  try {
-    const res = await fetch(`https://api.fxtwitter.com/status/${tweetId}`);
-    if (!res.ok) return result;
-    tweet = (await res.json()).tweet;
-  } catch (error) {
-    console.warn("Could not look up videos", tweetId, error);
-    return result;
-  }
+  if (!tweet) return result;
   const save = async (videos) => {
     const paths = [];
     for (const video of videos || []) {
@@ -514,8 +566,16 @@ function generateMarkdown(tweetData) {
         body += `![[${p}]]\n`;
       });
     } else {
-      body += `<iframe src="${sourceUrl}" width="550" height="700" frameborder="0" allowfullscreen></iframe>`;
+      body += `<iframe src="${sourceUrl}" width="550" height="700" frameborder="0" allowfullscreen></iframe>\n`;
     }
+    // Photos posted alongside the video (the thumbnails are not repeated)
+    (images || []).filter((img) => !isVideoThumb(img)).forEach((img, index) => {
+      body += imageEmbed(
+        `${username} - Tweet ${tweetId} - Photo ${index + 1}`,
+        img,
+        localImages
+      );
+    });
   } else if (images && images.length > 0) {
     // Add images in markdown format only if no video
     body += "\n\n";
@@ -557,6 +617,11 @@ function imageListFrontmatter(key, urlKey, images, localImages) {
   return out;
 }
 
+/** Video/GIF poster (ext_tw_video_thumb, amplify_video_thumb, tweet_video_thumb) */
+function isVideoThumb(url) {
+  return /_video_thumb\//.test(url);
+}
+
 /** Embed an image: the vault copy if saved, otherwise the remote URL */
 function imageEmbed(alt, img, localImages) {
   const local = localImages.get(img);
@@ -595,6 +660,13 @@ function generateQuotedSection(quoted, localImages = new Map(), localVideos = []
     section += `\n🎥 [Watch Video on X](${quoted.sourceUrl})\n`;
     localVideos.forEach((p) => {
       section += `![[${p}]]\n`;
+    });
+    (quoted.images || []).filter((img) => !isVideoThumb(img)).forEach((img, index) => {
+      section += imageEmbed(
+        `${quoted.username} - Quoted Photo ${index + 1}`,
+        img,
+        localImages
+      );
     });
   } else if (quoted.images && quoted.images.length > 0) {
     section += "\n";
