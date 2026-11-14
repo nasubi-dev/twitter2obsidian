@@ -209,10 +209,16 @@ async function saveTweetToObsidian(tweetData, slot = 1) {
   // list as the fallback when the lookup fails.
   const fxTweet = await lookupTweet(tweetId);
   const allImages = mergeImages(images, fxTweet?.media);
+  // A video past the rendered grid has no player in the DOM, so trust the API too.
+  const hasVideo =
+    tweetData.hasVideo || (fxTweet?.media?.videos?.length || 0) > 0;
   const quoted = tweetData.quoted
     ? {
         ...tweetData.quoted,
         images: mergeImages(tweetData.quoted.images, fxTweet?.quote?.media),
+        hasVideo:
+          tweetData.quoted.hasVideo ||
+          (fxTweet?.quote?.media?.videos?.length || 0) > 0,
       }
     : tweetData.quoted;
 
@@ -225,13 +231,14 @@ async function saveTweetToObsidian(tweetData, slot = 1) {
 
   // Same for videos (mp4 via the fxtwitter API). Failures keep the X link only.
   const { videos: localVideos, quotedVideos: localQuotedVideos } =
-    tweetData.hasVideo || quoted?.hasVideo
+    hasVideo || quoted?.hasVideo
       ? await saveVideosToVault(settings, fxTweet)
       : { videos: [], quotedVideos: [] };
 
   // Generate markdown content
   const markdown = generateMarkdown({
     ...tweetData,
+    hasVideo,
     images: allImages,
     quoted,
     localImages,
@@ -559,8 +566,16 @@ function generateMarkdown(tweetData) {
         body += `![[${p}]]\n`;
       });
     } else {
-      body += `<iframe src="${sourceUrl}" width="550" height="700" frameborder="0" allowfullscreen></iframe>`;
+      body += `<iframe src="${sourceUrl}" width="550" height="700" frameborder="0" allowfullscreen></iframe>\n`;
     }
+    // Photos posted alongside the video (the thumbnails are not repeated)
+    (images || []).filter((img) => !isVideoThumb(img)).forEach((img, index) => {
+      body += imageEmbed(
+        `${username} - Tweet ${tweetId} - Photo ${index + 1}`,
+        img,
+        localImages
+      );
+    });
   } else if (images && images.length > 0) {
     // Add images in markdown format only if no video
     body += "\n\n";
@@ -602,6 +617,11 @@ function imageListFrontmatter(key, urlKey, images, localImages) {
   return out;
 }
 
+/** Video/GIF poster (ext_tw_video_thumb, amplify_video_thumb, tweet_video_thumb) */
+function isVideoThumb(url) {
+  return /_video_thumb\//.test(url);
+}
+
 /** Embed an image: the vault copy if saved, otherwise the remote URL */
 function imageEmbed(alt, img, localImages) {
   const local = localImages.get(img);
@@ -640,6 +660,13 @@ function generateQuotedSection(quoted, localImages = new Map(), localVideos = []
     section += `\n🎥 [Watch Video on X](${quoted.sourceUrl})\n`;
     localVideos.forEach((p) => {
       section += `![[${p}]]\n`;
+    });
+    (quoted.images || []).filter((img) => !isVideoThumb(img)).forEach((img, index) => {
+      section += imageEmbed(
+        `${quoted.username} - Quoted Photo ${index + 1}`,
+        img,
+        localImages
+      );
     });
   } else if (quoted.images && quoted.images.length > 0) {
     section += "\n";
