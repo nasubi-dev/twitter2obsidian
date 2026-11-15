@@ -265,6 +265,20 @@ node scripts/localize-images.mjs --apply
 
 既存の本文と `created` / `updated` などのプロパティは保持されます。処理済みのツイート ID はキャッシュに記録されるため、中断しても再開できます。
 
+### 保存済みノートの動画を Vault に取り込む
+
+動画の保存に対応する前のノートは、`<iframe>` で X のポストを表示しているだけです。`scripts/localize-videos.mjs` が fxtwitter の API で mp4 を取り、拡張と同じ規則（720p 以下、30MB まで）で `<vault>/assets/twitter/` に保存して、`<iframe>` を `![[…mp4]]` に置き換えます。ポストが消えているノートは `<iframe>` のまま残し、`videos_lost: true` を付けます。動画のサムネイルが無いノートには、サムネイルも `images:` に足します。対象フォルダ以下を再帰的に見ます。何度実行しても同じ結果になります。詳しくは [docs/notes/動画のローカル保存.md](docs/notes/動画のローカル保存.md)。
+
+```bash
+# ドライラン(API と HEAD だけ、書き込みなし)
+node scripts/localize-videos.mjs --vault "$HOME/Documents/obsidian/Clippings"
+
+# 問題なければ書き込む
+node scripts/localize-videos.mjs --vault "$HOME/Documents/obsidian/Clippings" --apply
+```
+
+環境変数は `localize-images.mjs` と同じ（`T2O_CONCURRENCY` の既定は `2`）。
+
 ## ライセンス
 
 MIT License
