@@ -81,6 +81,37 @@ window.addEventListener(
   true
 );
 
+// Plain "c" copies the selected tweet's link (https://x.com/<user>/status/<id>).
+// X has no single key for this ("s" only opens the share menu).
+window.addEventListener(
+  "keydown",
+  async (event) => {
+    if (event.key !== "c" || event.repeat || event.isComposing) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (isTypingTarget(event.target)) return;
+
+    const focused = findFocusedTweet();
+    let path = focused ? findPermalink(focused, findQuotedTweet(focused)) : null;
+    if (!focused) {
+      // Status page with nothing selected: the page's own tweet
+      path = location.pathname.match(/^\/[^/]+\/status\/\d+/)?.[0] || null;
+    }
+    if (!path) return; // nothing to copy; leave the key to X
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const url = `https://x.com${path}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast(`🔗 リンクをコピーしました: ${url}`, "success");
+    } catch (error) {
+      console.error("Copy link failed:", error);
+      showToast("❌ リンクをコピーできませんでした", "error");
+    }
+  },
+  true
+);
+
 // Cmd+O, then 1/2/3 picks the folder (Folder Path 1〜3 in the settings).
 // Esc or 4 seconds without a number cancels. Cmd+O would otherwise open
 // Firefox's "Open File" dialog, so it is swallowed on X pages.
